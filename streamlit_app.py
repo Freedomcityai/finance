@@ -151,7 +151,7 @@ to_year = st.sidebar.selectbox("Til år", years_available, index=len(years_avail
 df = df[df["Date"].dt.year.between(from_year, to_year)]
 ann = annualize_from_monthly(df)
 
-# Grafer
+# 1️⃣ Grafer for årlige afkast
 fig2 = go.Figure()
 for serie in selected_series:
     prod_ann = ann[(ann["Serie"] == serie) & (ann["IsBenchmark"] == False)]
@@ -165,6 +165,32 @@ for serie in selected_series:
 
 fig2.update_layout(title="Årlige afkast (%)", xaxis_title="År", yaxis_title="Afkast (%)")
 st.plotly_chart(fig2, use_container_width=True)
+
+# KPI'er & værdiudvikling
+st.subheader("Værdiudvikling & KPI'er")
+for serie in selected_series:
+    prod_ann = ann[(ann["Serie"] == serie) & (ann["IsBenchmark"] == False)]
+    ann_dict = dict(zip(prod_ann["Year"], prod_ann["AnnualReturn"]))
+
+    bal_df = evolve_balance(
+        annual_returns=ann_dict,
+        start_balance=start_balance,
+        annual_contrib=annual_contrib,
+        contrib_timing=contrib_timing,
+        tax_rate=tax_rate
+    )
+
+    met = metrics(ann_dict, rf_rate)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric(f"{serie} CAGR", f"{met['CAGR']*100:.1f}%")
+    col2.metric("Volatilitet", f"{met['Volatility']*100:.1f}%")
+    col3.metric("Max Drawdown", f"{met['MaxDrawdown']*100:.1f}%")
+    col4.metric("Sharpe Ratio", f"{met['Sharpe']:.2f}")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=bal_df["Year"], y=bal_df["EndBalance"], mode="lines+markers", name=serie))
+    fig.update_layout(title=f"Værdiudvikling – {serie}", xaxis_title="År", yaxis_title="Balance (kr.)")
+    st.plotly_chart(fig, use_container_width=True)
 
 # Resultattabel
 st.subheader("Resultattabel")
