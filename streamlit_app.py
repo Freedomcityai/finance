@@ -7,6 +7,32 @@ import plotly.graph_objects as go
 from statsmodels.api import OLS, add_constant  # <-- til regression
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
+# LIGE EFTER st.set_page_config(...)
+st.markdown("""
+<style>
+/* Farv alle valgte chips i st.multiselect */
+.stMultiSelect [data-baseweb="tag"],
+.stMultiSelect [data-baseweb="tag"] div,
+.stMultiSelect [data-baseweb="tag"] span {
+  background-color: #005782 !important;
+  color: #ffffff !important;
+  border-color: #005782 !important;
+}
+
+/* Close-ikonet (x) */
+.stMultiSelect [data-baseweb="tag"] svg {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+}
+
+/* Hover/fokus state */
+.stMultiSelect [data-baseweb="tag"]:hover,
+.stMultiSelect [data-baseweb="tag"]:focus-within {
+  background-color: #004667 !important;
+  border-color: #004667 !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 META_COLS = ["Name", "NHM_Id", "Produktudbyder", "Produkt", "Risikoniveau", "År til pension", "ÅOP"]
 CSV_CANDIDATES = ["afkast_clean.csv", "data/afkast_clean.csv"]
