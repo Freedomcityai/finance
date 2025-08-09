@@ -7,6 +7,18 @@ import plotly.graph_objects as go
 from statsmodels.api import OLS, add_constant  # regression
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
+st.markdown("""
+<style>
+/* Framed radio group at top of sidebar */
+section[data-testid="stSidebar"] .mode-box{
+  border:2px solid #005782; border-radius:12px; padding:14px; margin-bottom:14px;
+}
+section[data-testid="stSidebar"] .mode-title{
+  font-weight:600; margin-bottom:8px; color:#0f172a;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # --- Farv valgte tags i multiselect (#005782) ---
 st.markdown("""
@@ -217,7 +229,10 @@ def risk_match_required_contrib(target_worstcase, w_eq, mu_e, mu_b, sig_e, sig_b
 
 # ---------- Sidebar: vælg visning ----------
 st.sidebar.header("Indstillinger")
-mode = st.sidebar.radio("Visning", ["Analyse", "Pensionssimulering"], index=0)
+with st.sidebar:
+    st.markdown('<div class="mode-box"><div class="mode-title">Visning</div>', unsafe_allow_html=True)
+    mode = st.radio("", ["Analyse", "Pensionssimulering"], key="mode", label_visibility="collapsed")
+    st.markdown('</div>', unsafe_allow_html=True)  # close .mode-box
 
 # =========================================================
 # ======================== ANALYSE ========================
