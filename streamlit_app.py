@@ -11,7 +11,7 @@ st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide
 
 @st.cache_data
 def load_data(path: str):
-    df = pd.read_csv(path, parse_dates=["Date"])
+    df = pd.read_csv(path, sep=";", parse_dates=["Date"])
     df["Serie"] = df["Serie"].astype(str)
     df["Produktudbyder"] = df["Produktudbyder"].astype(str)
     return df
