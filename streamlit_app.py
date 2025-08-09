@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import plotly.graph_objects as go
+from statsmodels.api import OLS, add_constant  # <-- til regression
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
 
@@ -17,6 +18,11 @@ KPI_HELP = {
     "Volatilitet": "Årlig standardafvigelse af afkast (risikomål).",
     "Max Drawdown": "Største peak-to-trough fald i værdikurven i perioden.",
     "Sharpe Ratio": "Gennemsnitligt merafkast ift. risikofri rente divideret med volatilitet.",
+    # Benchmark-KPI'er:
+    "Beta": "Hældningen i en OLS-regression af produktets afkast mod benchmark (følsomhed).",
+    "R2": "Forklaret varians fra regressionen (0–1).",
+    "TE": "Tracking Error: standardafvigelsen af (produkt − benchmark), årlig.",
+    "Alpha": "Interceptet i regressionen: merafkast uafhængigt af benchmark (årligt).",
 }
 
 # --- DATA LOADING ---
@@ -114,11 +120,30 @@ def metrics(annual_returns: dict, rf_rate: float = 0.0) -> dict:
     cagr = (1 + arr).prod() ** (1 / years) - 1
     vol = np.std(arr, ddof=1) if years > 1 else np.nan
     cum = np.cumprod(1 + arr)
-    peaks = np.maximum.accumulate(cum)
+    peaks = np.maximum_accumulate(cum)
     dd = (cum - peaks) / peaks
     max_dd = dd.min() if len(dd) else np.nan
     sharpe = (np.mean(arr) - rf_rate) / vol if (vol and vol > 0) else np.nan
     return {"CAGR": cagr, "Volatility": vol, "MaxDrawdown": max_dd, "Sharpe": sharpe}
+
+def regression_vs_bench(prod_ann: pd.DataFrame, bench_ann: pd.DataFrame):
+    """OLS: produkt = alpha + beta*benchmark. Returnér alpha, beta, R2, tracking error + merged data."""
+    merged = pd.merge(
+        prod_ann[["Year", "AnnualReturn"]],
+        bench_ann[["Year", "AnnualReturn"]],
+        on="Year",
+        suffixes=("_p", "_b"),
+    )
+    if len(merged) < 3:
+        return None, None
+    X = add_constant(merged["AnnualReturn_b"])
+    y = merged["AnnualReturn_p"]
+    model = OLS(y, X, missing="drop").fit()
+    beta = model.params.get("AnnualReturn_b", np.nan)
+    alpha = model.params.get("const", np.nan)
+    r2 = model.rsquared
+    te = np.std(merged["AnnualReturn_p"] - merged["AnnualReturn_b"], ddof=1) if len(merged) > 1 else np.nan
+    return {"beta": beta, "alpha": alpha, "R2": r2, "TE": te}, merged
 
 # --- UI ---
 st.title("Afkast, benchmark & simulering (årlige afkast)")
@@ -128,19 +153,17 @@ with st.sidebar:
     start_balance = st.number_input("Eksisterende opsparing", min_value=0.0, value=100000.0, step=1000.0, format="%.2f")
     annual_contrib = st.number_input("Årlig indbetaling", min_value=0.0, value=24000.0, step=1000.0, format="%.2f")
 
-    # ↓↓↓ Flyttet herop + sorteret faldende ↓↓↓
-    # Bemærk: vi bruger dataens år til at bygge valgene
+    # Årsfiltre – faldende sortering
     _df_for_years = load_data()
     years_available = sorted(_df_for_years["Date"].dt.year.unique(), reverse=True)
     from_year = st.selectbox("Fra år", years_available, index=0)
     to_year   = st.selectbox("Til år",  years_available, index=len(years_available)-1)
-    # ↑↑↑
 
     contrib_timing = st.selectbox("Indbetalingstidspunkt", options=["start", "end"], index=1)
     tax_rate = st.number_input("Effektiv skattesats", min_value=0.0, max_value=1.0, value=0.15)
     rf_rate = st.number_input("Risikofri rente", min_value=-1.0, max_value=1.0, value=0.0)
 
-# Indlæs rigtige data (ikke den midlertidige til årsliste)
+# Indlæs rigtige data
 df = load_data()
 
 # Produktvalg (max 5, kun non-benchmark)
@@ -153,7 +176,7 @@ selected_series = st.multiselect(
     max_selections=5
 )
 
-# Filtrer på periode (robust uanset rækkefølge)
+# Filtrer på periode
 year_min, year_max = sorted([from_year, to_year])
 df = df[df["Date"].dt.year.between(year_min, year_max)]
 ann = annualize_from_monthly(df)
@@ -172,9 +195,10 @@ for serie in selected_series:
 fig2.update_layout(title="Årlige afkast (%)", xaxis_title="År", yaxis_title="Afkast (%)")
 st.plotly_chart(fig2, use_container_width=True)
 
-# Værdiudvikling – fælles graf + individuelle KPI'er
+# Værdiudvikling – fælles graf + individuelle KPI'er (inkl. benchmark-KPI'er)
 st.subheader("Værdiudvikling & KPI'er")
 fig_bal = go.Figure()
+
 for serie in selected_series:
     prod_ann = ann[(ann["Serie"] == serie) & (~ann["IsBenchmark"])]
     ann_dict = dict(zip(prod_ann["Year"], prod_ann["AnnualReturn"]))
@@ -194,6 +218,19 @@ for serie in selected_series:
     c3.metric("Max Drawdown", f"{met['MaxDrawdown']*100:.1f}%", help=KPI_HELP["Max Drawdown"])
     c4.metric("Sharpe Ratio", f"{met['Sharpe']:.2f}", help=KPI_HELP["Sharpe Ratio"])
 
+    # Benchmark-regression for serien
+    bench_ann = ann[(ann["Serie"] == serie) & (ann["IsBenchmark"])]
+    reg_stats, _merged = regression_vs_bench(prod_ann, bench_ann)
+    if reg_stats is not None:
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("Beta", f"{reg_stats['beta']:.2f}", help=KPI_HELP["Beta"])
+        d2.metric("R²", f"{reg_stats['R2']:.2f}", help=KPI_HELP["R2"])
+        d3.metric("Tracking Error", f"{reg_stats['TE']*100:.1f}%", help=KPI_HELP["TE"])
+        d4.metric("Alfa", f"{reg_stats['alpha']*100:.1f}%", help=KPI_HELP["Alpha"])
+    else:
+        st.info(f"{serie}: For få år til benchmark-regression.")
+
+    # Til fælles værdiudviklingsgraf
     fig_bal.add_trace(go.Scatter(
         x=bal_df["Year"],
         y=bal_df["EndBalance"],
