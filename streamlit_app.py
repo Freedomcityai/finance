@@ -3,18 +3,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from datetime import datetime
 import plotly.graph_objects as go
-from statsmodels.api import OLS, add_constant
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
 
-# --- Konstanter / metadata ---
 META_COLS = ["Name", "NHM_Id", "Produktudbyder", "Produkt", "Risikoniveau", "År til pension", "ÅOP"]
 CSV_CANDIDATES = ["afkast_clean.csv", "data/afkast_clean.csv"]
 XLSX_CANDIDATES = ["Afkast_Delvis.xlsx", "data/Afkast_Delvis.xlsx"]
 
-# --- Indlæsning & klargøring af data ---
+# --- DATA LOADING ---
 def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
     raw = pd.read_excel(xlsx_path, sheet_name="Afkast")
     date_cols = [c for c in raw.columns if c not in META_COLS]
@@ -38,44 +35,34 @@ def load_data() -> pd.DataFrame:
         if Path(p).exists():
             df = pd.read_csv(p, sep=";", dtype=str)
             df.columns = [c.strip() for c in df.columns]
-
             if "Date" not in df.columns:
                 df = pd.read_csv(p, dtype=str)
                 df.columns = [c.strip() for c in df.columns]
             if "Date" not in df.columns:
                 raise ValueError("CSV mangler 'Date'.")
-
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
             df["Return"] = df["Return"].astype(str).str.replace(",", ".", regex=False)
             df["Return"] = pd.to_numeric(df["Return"], errors="coerce")
-
             if "Serie" not in df.columns and "Name" in df.columns:
                 df["Serie"] = df["Name"].astype(str).str.replace(r",?\s*benchmark$", "", regex=True)
-            elif "Serie" not in df.columns:
-                raise ValueError("Mangler 'Serie' eller 'Name'.")
-
             if "IsBenchmark" in df.columns:
                 s = df["IsBenchmark"].astype(str).str.strip().str.lower()
                 df["IsBenchmark"] = s.isin(["true", "1", "y", "yes"])
+            elif "Produkt" in df.columns:
+                df["IsBenchmark"] = df["Produkt"].astype(str).str.lower().eq("benchmark")
             else:
-                if "Produkt" in df.columns:
-                    df["IsBenchmark"] = df["Produkt"].astype(str).str.lower().eq("benchmark")
-                else:
-                    df["IsBenchmark"] = False
-
+                df["IsBenchmark"] = False
             if "Produktudbyder" not in df.columns:
                 df["Produktudbyder"] = ""
-
             df = df.dropna(subset=["Date", "Return"]).reset_index(drop=True)
             return df
-
     for p in XLSX_CANDIDATES:
         if Path(p).exists():
             return _tidy_from_excel(p)
-
     st.error("Ingen gyldig afkast-fil fundet.")
     st.stop()
 
+# --- CALCULATIONS ---
 def annualize_from_monthly(df: pd.DataFrame) -> pd.DataFrame:
     tmp = df.copy()
     tmp["Year"] = tmp["Date"].dt.year
@@ -134,7 +121,7 @@ df = load_data()
 non_bench_mask = ~df["IsBenchmark"].astype(bool)
 all_series = sorted(df.loc[non_bench_mask, "Serie"].dropna().unique().tolist())
 
-# 2️⃣ Vælg op til 5 produkter
+# Produktvalg (max 5)
 selected_series = st.multiselect(
     "Vælg op til 5 produkter",
     options=all_series,
@@ -142,19 +129,19 @@ selected_series = st.multiselect(
     max_selections=5
 )
 
-# 3️⃣ Periodevalg
+# Periodevalg
 years_available = sorted(df["Date"].dt.year.unique())
 from_year = st.sidebar.selectbox("Fra år", years_available, index=0)
 to_year = st.sidebar.selectbox("Til år", years_available, index=len(years_available)-1)
 
-# Filtrer data
+# Filtrer
 df = df[df["Date"].dt.year.between(from_year, to_year)]
 ann = annualize_from_monthly(df)
 
-# 1️⃣ Grafer for årlige afkast
+# Årlige afkast graf
 fig2 = go.Figure()
 for serie in selected_series:
-    prod_ann = ann[(ann["Serie"] == serie) & (ann["IsBenchmark"] == False)]
+    prod_ann = ann[(ann["Serie"] == serie) & (~ann["IsBenchmark"])]
     fig2.add_trace(go.Bar(
         x=prod_ann["Year"],
         y=prod_ann["AnnualReturn"] * 100,
@@ -162,14 +149,14 @@ for serie in selected_series:
         text=prod_ann["AnnualReturn"].map(lambda x: f"{x:.1%}"),
         textposition='outside'
     ))
-
 fig2.update_layout(title="Årlige afkast (%)", xaxis_title="År", yaxis_title="Afkast (%)")
 st.plotly_chart(fig2, use_container_width=True)
 
-# KPI'er & værdiudvikling
+# KPI'er + fælles værdiudviklingsgraf
 st.subheader("Værdiudvikling & KPI'er")
+fig_bal = go.Figure()
 for serie in selected_series:
-    prod_ann = ann[(ann["Serie"] == serie) & (ann["IsBenchmark"] == False)]
+    prod_ann = ann[(ann["Serie"] == serie) & (~ann["IsBenchmark"])]
     ann_dict = dict(zip(prod_ann["Year"], prod_ann["AnnualReturn"]))
 
     bal_df = evolve_balance(
@@ -187,13 +174,22 @@ for serie in selected_series:
     col3.metric("Max Drawdown", f"{met['MaxDrawdown']*100:.1f}%")
     col4.metric("Sharpe Ratio", f"{met['Sharpe']:.2f}")
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=bal_df["Year"], y=bal_df["EndBalance"], mode="lines+markers", name=serie))
-    fig.update_layout(title=f"Værdiudvikling – {serie}", xaxis_title="År", yaxis_title="Balance (kr.)")
-    st.plotly_chart(fig, use_container_width=True)
+    fig_bal.add_trace(go.Scatter(
+        x=bal_df["Year"],
+        y=bal_df["EndBalance"],
+        mode="lines+markers",
+        name=serie
+    ))
+
+fig_bal.update_layout(
+    title="Værdiudvikling – alle valgte produkter",
+    xaxis_title="År",
+    yaxis_title="Balance (kr.)"
+)
+st.plotly_chart(fig_bal, use_container_width=True)
 
 # Resultattabel
 st.subheader("Resultattabel")
-res = ann[ann["Serie"].isin(selected_series) & (ann["IsBenchmark"] == False)].copy()
+res = ann[ann["Serie"].isin(selected_series) & (~ann["IsBenchmark"])].copy()
 res["AnnualReturn"] = res["AnnualReturn"].map(lambda x: f"{x:.1%}")
 st.dataframe(res)
