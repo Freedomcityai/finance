@@ -8,12 +8,12 @@ from statsmodels.api import OLS, add_constant  # regression
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
 
-# ---------------- Session-state init (persist across view switches) ----------------
-if "init_done" not in st.session_state:
-    st.session_state.update({
+# ---------------- Ensure all session keys exist (avoid KeyErrors) ----------------
+def ensure_defaults():
+    defaults = {
+        # View
         "mode": "Analyse",
-
-        # Analyse defaults
+        # Analyse
         "an_start_balance": 100000.0,
         "an_annual_contrib": 24000.0,
         "an_from_year": None,
@@ -22,8 +22,7 @@ if "init_done" not in st.session_state:
         "an_tax": 0.15,
         "an_rf": 0.0,
         "an_series": [],
-
-        # Simulation defaults
+        # Simulation
         "sim_start_cap": 250000.0,
         "sim_yearly_contrib": 24000.0,
         "sim_horizon": 18,
@@ -32,10 +31,18 @@ if "init_done" not in st.session_state:
         "sim_tax_global": 0.15,
         "sim_use_tax": True,
         "sim_pct_preset": "5/95",
-        "sim_w_eq_primary": 60,   # percent
-        "sim_w_eq_alt": 80,       # percent
-    })
-    st.session_state.init_done = True
+        "sim_w_eq_primary": 60,  # percent
+        "sim_w_eq_alt": 80,      # percent
+        "sim_mu_eq": 0.07,
+        "sim_mu_bd": 0.02,
+        "sim_rho": 0.10,
+        "sim_sig_eq": 0.18,
+        "sim_sig_bd": 0.06,
+    }
+    for k, v in defaults.items():
+        st.session_state.setdefault(k, v)
+
+ensure_defaults()
 
 # ---------------- CSS ----------------
 st.markdown("""
@@ -53,12 +60,12 @@ st.markdown("""
     background-color: #004667 !important;
     border-color: #004667 !important;
 }
-/* Framed radio group at top of sidebar */
-section[data-testid="stSidebar"] .mode-box{
-  border:2px solid #005782; border-radius:12px; padding:14px; margin:0 0 14px 0;
-  background:#f6fafc;
+/* Frame the ENTIRE radio (label + options) and place above 'Indstillinger' */
+section[data-testid="stSidebar"] div[role="radiogroup"]{
+  border:2px solid #005782; border-radius:12px;
+  padding:12px; margin:0 0 14px 0; background:#f6fafc;
 }
-section[data-testid="stSidebar"] .mode-title{
+section[data-testid="stSidebar"] div[role="radiogroup"] > label{
   font-weight:700; margin-bottom:8px; color:#0f172a;
 }
 </style>
@@ -250,11 +257,9 @@ def risk_match_required_contrib(target_worstcase, w_eq, mu_e, mu_b, sig_e, sig_b
             hi = mid
     return hi
 
-# ---------------- Sidebar: view selector (framed) + header ----------------
+# ---------------- Sidebar: framed radio ABOVE 'Indstillinger' ----------------
 with st.sidebar:
-    st.markdown('<div class="mode-box"><div class="mode-title">Visning</div>', unsafe_allow_html=True)
-    mode = st.radio("", ["Analyse", "Pensionssimulering"], key="mode", label_visibility="collapsed")
-    st.markdown('</div>', unsafe_allow_html=True)
+    mode = st.radio("Visning", ["Analyse", "Pensionssimulering"], key="mode")
     st.header("Indstillinger")
 
 # ========================================================================
@@ -262,15 +267,15 @@ with st.sidebar:
 # ========================================================================
 if mode == "Analyse":
     with st.sidebar:
-        # Years list and seed session on first run
+        # Seed year choices from data
         _df_for_years = load_data()
         years_available = sorted(_df_for_years["Date"].dt.year.unique(), reverse=True)
-        if st.session_state["an_from_year"] is None:
+        if st.session_state.get("an_from_year") is None:
             st.session_state["an_from_year"] = years_available[0]
-        if st.session_state["an_to_year"] is None:
+        if st.session_state.get("an_to_year") is None:
             st.session_state["an_to_year"] = years_available[-1]
 
-        # Widgets (NO value/index args; use keys only)
+        # Widgets (use keys only)
         start_balance  = st.number_input("Eksisterende opsparing", min_value=0.0, step=1000.0,
                                          format="%.2f", key="an_start_balance")
         annual_contrib = st.number_input("Årlig indbetaling", min_value=0.0, step=1000.0,
@@ -287,7 +292,7 @@ if mode == "Analyse":
     non_bench_mask = ~df["IsBenchmark"].astype(bool)
     all_series = sorted(df.loc[non_bench_mask, "Serie"].dropna().unique().tolist())
 
-    # Ensure a default selection once (if user never picked)
+    # Ensure a default selection once
     if not st.session_state["an_series"] and all_series:
         st.session_state["an_series"] = [all_series[0]]
 
@@ -407,38 +412,22 @@ else:
     with st.expander("Avancerede antagelser (afkast/vol/korrelation)"):
         a1, a2, a3 = st.columns(3)
         mu_eq = a1.number_input("Forventet årligt aktieafkast", step=0.005, format="%.3f", key="sim_mu_eq")
-        if "sim_mu_eq" not in st.session_state or st.session_state["sim_mu_eq"] is None:
-            st.session_state["sim_mu_eq"] = 0.07
-            mu_eq = 0.07
         mu_bd = a2.number_input("Forventet årligt obligationsafkast", step=0.005, format="%.3f", key="sim_mu_bd")
-        if "sim_mu_bd" not in st.session_state or st.session_state["sim_mu_bd"] is None:
-            st.session_state["sim_mu_bd"] = 0.02
-            mu_bd = 0.02
         rho   = a3.number_input("Korrelation (aktier, obligationer)", min_value=-1.0, max_value=1.0,
                                 step=0.05, key="sim_rho")
-        if "sim_rho" not in st.session_state or st.session_state["sim_rho"] is None:
-            st.session_state["sim_rho"] = 0.10
-            rho = 0.10
-
         b1, b2 = st.columns(2)
         sig_eq = b1.number_input("Aktie-volatilitet (årlig std.)", step=0.01, format="%.2f", key="sim_sig_eq")
-        if "sim_sig_eq" not in st.session_state or st.session_state["sim_sig_eq"] is None:
-            st.session_state["sim_sig_eq"] = 0.18
-            sig_eq = 0.18
         sig_bd = b2.number_input("Obligations-volatilitet (årlig std.)", step=0.01, format="%.2f", key="sim_sig_bd")
-        if "sim_sig_bd" not in st.session_state or st.session_state["sim_sig_bd"] is None:
-            st.session_state["sim_sig_bd"] = 0.06
-            sig_bd = 0.06
 
     # Porteføljeparametre
     mu_p_primary, sig_p_primary = port_params(w_eq_primary, mu_eq, mu_bd, sig_eq, sig_bd, rho)
     mu_p_alt,     sig_p_alt     = port_params(w_eq_alt,     mu_eq, mu_bd, sig_eq, sig_bd, rho)
 
     # Simulationer
-    traj_primary = simulate_paths(mu_p_primary, sig_p_primary, horizon_years, n_sims,
+    traj_primary = simulate_paths(mu_p_primary, sig_p_primary, horizon_years, st.session_state["sim_nsims"],
                                   st.session_state["sim_start_cap"], st.session_state["sim_yearly_contrib"],
                                   st.session_state["sim_timing"], tax_rate=tax_rate_sim, seed=1)
-    traj_alt     = simulate_paths(mu_p_alt,     sig_p_alt,     horizon_years, n_sims,
+    traj_alt     = simulate_paths(mu_p_alt,     sig_p_alt,     horizon_years, st.session_state["sim_nsims"],
                                   st.session_state["sim_start_cap"], st.session_state["sim_yearly_contrib"],
                                   st.session_state["sim_timing"], tax_rate=tax_rate_sim, seed=2)
 
@@ -470,12 +459,13 @@ else:
         target_worstcase=pL_p,
         w_eq=w_eq_alt,
         mu_e=mu_eq, mu_b=mu_bd, sig_e=sig_eq, sig_b=sig_bd, rho_eb=rho,
-        years=horizon_years, sims=n_sims, start=st.session_state["sim_start_cap"],
-        timing=st.session_state["sim_timing"], tax_rate=tax_rate_sim
+        years=st.session_state["sim_horizon"], sims=st.session_state["sim_nsims"],
+        start=st.session_state["sim_start_cap"], timing=st.session_state["sim_timing"],
+        tax_rate=tax_rate_sim
     )
-    traj_matched = simulate_paths(mu_p_alt, sig_p_alt, horizon_years, n_sims,
-                                  st.session_state["sim_start_cap"], req_contrib,
-                                  st.session_state["sim_timing"], tax_rate=tax_rate_sim, seed=3)
+    traj_matched = simulate_paths(mu_p_alt, sig_p_alt, st.session_state["sim_horizon"], st.session_state["sim_nsims"],
+                                  st.session_state["sim_start_cap"], req_contrib, st.session_state["sim_timing"],
+                                  tax_rate=tax_rate_sim, seed=3)
     _, p50_m, _ = summarize_terminal(traj_matched, p_low, p_high)
 
     st.write(f"For at fastholde samme worst-case ({pL_p:,.0f} kr), bør årlig indbetaling hæves til **{req_contrib:,.0f} kr**.")
