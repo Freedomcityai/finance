@@ -120,7 +120,7 @@ def metrics(annual_returns: dict, rf_rate: float = 0.0) -> dict:
     cagr = (1 + arr).prod() ** (1 / years) - 1
     vol = np.std(arr, ddof=1) if years > 1 else np.nan
     cum = np.cumprod(1 + arr)
-    peaks = np.maximum_accumulate(cum)
+    peaks = np.maximum.accumulate(cum)
     dd = (cum - peaks) / peaks
     max_dd = dd.min() if len(dd) else np.nan
     sharpe = (np.mean(arr) - rf_rate) / vol if (vol and vol > 0) else np.nan
