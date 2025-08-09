@@ -8,7 +8,36 @@ from statsmodels.api import OLS, add_constant  # regression
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
 
-# ---------- CSS ----------
+# ---------------- Session-state init (persist widgets across view switches) ----------------
+if "init_done" not in st.session_state:
+    st.session_state.update({
+        "mode": "Analyse",
+
+        # Analyse defaults
+        "an_start_balance": 100000.0,
+        "an_annual_contrib": 24000.0,
+        "an_from_year": None,
+        "an_to_year": None,
+        "an_timing": "end",
+        "an_tax": 0.15,
+        "an_rf": 0.0,
+        "an_series": [],
+
+        # Simulation defaults
+        "sim_start_cap": 250000.0,
+        "sim_yearly_contrib": 24000.0,
+        "sim_horizon": 18,
+        "sim_timing": "end",
+        "sim_nsims": 5000,
+        "sim_tax_global": 0.15,
+        "sim_use_tax": True,
+        "sim_pct_preset": "5/95",
+        "sim_w_eq_primary": 60,
+        "sim_w_eq_alt": 80,
+    })
+    st.session_state.init_done = True
+
+# ---------------- CSS ----------------
 st.markdown("""
 <style>
 /* Multiselect chips -> blå */
@@ -26,7 +55,7 @@ st.markdown("""
 }
 /* Framed radio group at top of sidebar */
 section[data-testid="stSidebar"] .mode-box{
-  border:2px solid #005782; border-radius:12px; padding:14px; margin-bottom:14px;
+  border:2px solid #005782; border-radius:12px; padding:14px; margin:0 0 14px 0;
   background:#f6fafc;
 }
 section[data-testid="stSidebar"] .mode-title{
@@ -35,7 +64,7 @@ section[data-testid="stSidebar"] .mode-title{
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- Konstanter & hjælpetekster ----------
+# ---------------- Constants & help ----------------
 META_COLS = ["Name", "NHM_Id", "Produktudbyder", "Produkt", "Risikoniveau", "År til pension", "ÅOP"]
 CSV_CANDIDATES = ["afkast_clean.csv", "data/afkast_clean.csv"]
 XLSX_CANDIDATES = ["Afkast_Delvis.xlsx", "data/Afkast_Delvis.xlsx"]
@@ -51,7 +80,7 @@ KPI_HELP = {
     "Alpha": "Intercept i regressionen: merafkast uafhængigt af benchmark (årligt).",
 }
 
-# ---------- DATA LOADING ----------
+# ---------------- Data loading ----------------
 def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
     raw = pd.read_excel(xlsx_path, sheet_name="Afkast")
     date_cols = [c for c in raw.columns if c not in META_COLS]
@@ -70,12 +99,11 @@ def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
-    # CSV (semikolon eller komma)
     for p in CSV_CANDIDATES:
         if Path(p).exists():
             df = pd.read_csv(p, sep=";", dtype=str)
             df.columns = [c.strip() for c in df.columns]
-            if "Date" not in df.columns:  # prøv komma
+            if "Date" not in df.columns:  # try comma CSV
                 df = pd.read_csv(p, dtype=str)
                 df.columns = [c.strip() for c in df.columns]
             if "Date" not in df.columns:
@@ -102,7 +130,6 @@ def load_data() -> pd.DataFrame:
             df = df.dropna(subset=["Date", "Return"]).reset_index(drop=True)
             return df
 
-    # Excel fallback
     for p in XLSX_CANDIDATES:
         if Path(p).exists():
             return _tidy_from_excel(p)
@@ -110,7 +137,7 @@ def load_data() -> pd.DataFrame:
     st.error("Ingen gyldig afkast-fil fundet (afkast_clean.csv eller Afkast_Delvis.xlsx).")
     st.stop()
 
-# ---------- BEREGNINGER (Analyse) ----------
+# ---------------- Analysis helpers ----------------
 def annualize_from_monthly(df: pd.DataFrame) -> pd.DataFrame:
     tmp = df.copy()
     tmp["Year"] = tmp["Date"].dt.year
@@ -147,7 +174,7 @@ def metrics(annual_returns: dict, rf_rate: float = 0.0) -> dict:
     cagr = (1 + arr).prod() ** (1 / years) - 1
     vol = np.std(arr, ddof=1) if years > 1 else np.nan
     cum = np.cumprod(1 + arr)
-    peaks = np.maximum.accumulate(cum)  # fix
+    peaks = np.maximum.accumulate(cum)
     dd = (cum - peaks) / peaks
     max_dd = dd.min() if len(dd) else np.nan
     sharpe = (np.mean(arr) - rf_rate) / vol if (vol and vol > 0) else np.nan
@@ -171,7 +198,7 @@ def regression_vs_bench(prod_ann: pd.DataFrame, bench_ann: pd.DataFrame):
     te = np.std(merged["AnnualReturn_p"] - merged["AnnualReturn_b"], ddof=1) if len(merged) > 1 else np.nan
     return {"beta": beta, "alpha": alpha, "R2": r2, "TE": te}, merged
 
-# ---------- BEREGNINGER (Simulation) ----------
+# ---------------- Simulation helpers ----------------
 def port_params(w_eq, mu_e, mu_b, sig_e, sig_b, rho_eb):
     w_b = 1.0 - w_eq
     mu_p = w_eq * mu_e + w_b * mu_b
@@ -211,7 +238,6 @@ def summarize_path_percentiles(traj, p_low=5, p_high=95):
 
 def risk_match_required_contrib(target_worstcase, w_eq, mu_e, mu_b, sig_e, sig_b, rho_eb,
                                 years, sims, start, timing="end", tax_rate=0.0):
-    """Find årlig indbetaling der giver samme low-percentil som target_worstcase."""
     mu_p, sig_p = port_params(w_eq, mu_e, mu_b, sig_e, sig_b, rho_eb)
     lo, hi = 0.0, max(1.0, start/years * 2 + 100000.0)
     for _ in range(18):  # binær søgning
@@ -224,55 +250,69 @@ def risk_match_required_contrib(target_worstcase, w_eq, mu_e, mu_b, sig_e, sig_b
             hi = mid
     return hi
 
-# ---------- SIDEBAR: VISNING + INDSTILLINGER ----------
+# ---------------- Sidebar: view selector (framed) + header ----------------
 with st.sidebar:
-    # Visningsvælger i ramme – OVER "Indstillinger"
     st.markdown('<div class="mode-box"><div class="mode-title">Visning</div>', unsafe_allow_html=True)
     mode = st.radio("", ["Analyse", "Pensionssimulering"], key="mode", label_visibility="collapsed")
     st.markdown('</div>', unsafe_allow_html=True)
-
     st.header("Indstillinger")
 
-# =========================================================
-# ======================== ANALYSE ========================
-# =========================================================
+# ========================================================================
+#                                   ANALYSE
+# ========================================================================
 if mode == "Analyse":
     with st.sidebar:
-        start_balance  = st.number_input("Eksisterende opsparing", min_value=0.0, value=100000.0,
-                                         step=1000.0, format="%.2f", key="an_start_balance")
-        annual_contrib = st.number_input("Årlig indbetaling", min_value=0.0, value=24000.0,
-                                         step=1000.0, format="%.2f", key="an_annual_contrib")
-
-        # Årsfiltre – faldende rækkefølge
+        # Load years list and seed session on first run
         _df_for_years = load_data()
         years_available = sorted(_df_for_years["Date"].dt.year.unique(), reverse=True)
-        from_year = st.selectbox("Fra år", years_available, index=0, key="an_from_year")
-        to_year   = st.selectbox("Til år",  years_available, index=len(years_available)-1, key="an_to_year")
+        if st.session_state["an_from_year"] is None:
+            st.session_state["an_from_year"] = years_available[0]
+        if st.session_state["an_to_year"] is None:
+            st.session_state["an_to_year"] = years_available[-1]
 
-        contrib_timing = st.selectbox("Indbetalingstidspunkt", ["start", "end"], index=1, key="an_timing")
-        tax_rate       = st.number_input("Effektiv skattesats", min_value=0.0, max_value=1.0, value=0.15, key="an_tax")
-        rf_rate        = st.number_input("Risikofri rente", min_value=-1.0, max_value=1.0, value=0.0, key="an_rf")
+        def _opt_index(options, value, fallback_idx=0):
+            try:
+                return list(options).index(value)
+            except ValueError:
+                return fallback_idx
+
+        from_idx = _opt_index(years_available, st.session_state["an_from_year"], 0)
+        to_idx   = _opt_index(years_available, st.session_state["an_to_year"], len(years_available)-1)
+
+        start_balance  = st.number_input("Eksisterende opsparing", min_value=0.0, step=1000.0,
+                                         value=st.session_state["an_start_balance"], key="an_start_balance", format="%.2f")
+        annual_contrib = st.number_input("Årlig indbetaling", min_value=0.0, step=1000.0,
+                                         value=st.session_state["an_annual_contrib"], key="an_annual_contrib", format="%.2f")
+
+        from_year = st.selectbox("Fra år", years_available, index=from_idx, key="an_from_year")
+        to_year   = st.selectbox("Til år",  years_available, index=to_idx,   key="an_to_year")
+
+        contrib_timing = st.selectbox("Indbetalingstidspunkt", ["start","end"],
+                                      index=0 if st.session_state["an_timing"]=="start" else 1, key="an_timing")
+        tax_rate = st.number_input("Effektiv skattesats", min_value=0.0, max_value=1.0,
+                                   value=st.session_state["an_tax"], key="an_tax")
+        rf_rate  = st.number_input("Risikofri rente", min_value=-1.0, max_value=1.0,
+                                   value=st.session_state["an_rf"], key="an_rf")
 
     st.title("Afkast, benchmark & simulering (årlige afkast)")
-    df = load_data()
 
-    # Produktvalg (max 5, kun non-benchmark)
+    df = load_data()
     non_bench_mask = ~df["IsBenchmark"].astype(bool)
     all_series = sorted(df.loc[non_bench_mask, "Serie"].dropna().unique().tolist())
+
     selected_series = st.multiselect(
         "Vælg op til 5 produkter",
         options=all_series,
-        default=all_series[:1],
+        default=all_series[:1] if not st.session_state["an_series"] else st.session_state["an_series"],
         max_selections=5,
         key="an_series"
     )
 
-    # Filtrer på periode
     year_min, year_max = sorted([from_year, to_year])
     df = df[df["Date"].dt.year.between(year_min, year_max)]
     ann = annualize_from_monthly(df)
 
-    # Årlige afkast – samlet søjlediagram (1 decimal, i %)
+    # Årlige afkast – fælles bar chart
     fig2 = go.Figure()
     for serie in selected_series:
         prod_ann = ann[(ann["Serie"] == serie) & (~ann["IsBenchmark"])]
@@ -286,7 +326,7 @@ if mode == "Analyse":
     fig2.update_layout(title="Årlige afkast (%)", xaxis_title="År", yaxis_title="Afkast (%)")
     st.plotly_chart(fig2, use_container_width=True)
 
-    # Værdiudvikling – fælles graf + individuelle KPI'er (inkl. benchmark-KPI'er)
+    # Værdiudvikling + KPI’er
     st.subheader("Værdiudvikling & KPI'er")
     fig_bal = go.Figure()
 
@@ -309,7 +349,6 @@ if mode == "Analyse":
         c3.metric("Max Drawdown", f"{met['MaxDrawdown']*100:.1f}%", help=KPI_HELP["Max Drawdown"])
         c4.metric("Sharpe Ratio", f"{met['Sharpe']:.2f}", help=KPI_HELP["Sharpe Ratio"])
 
-        # Benchmark-KPI’er
         bench_ann = ann[(ann["Serie"] == serie) & (ann["IsBenchmark"])]
         reg_stats, _ = regression_vs_bench(prod_ann, bench_ann)
         if reg_stats is not None:
@@ -321,7 +360,6 @@ if mode == "Analyse":
         else:
             st.info(f"{serie}: For få år til benchmark-regression.")
 
-        # Til fælles værdiudviklingsgraf
         fig_bal.add_trace(go.Scatter(
             x=bal_df["Year"],
             y=bal_df["EndBalance"],
@@ -336,66 +374,61 @@ if mode == "Analyse":
     )
     st.plotly_chart(fig_bal, use_container_width=True)
 
-    # Resultattabel (formatteret i %)
     st.subheader("Resultattabel")
     res = ann[ann["Serie"].isin(selected_series) & (~ann["IsBenchmark"])].copy()
     res["AnnualReturn"] = res["AnnualReturn"].map(lambda x: f"{x:.1%}")
     st.dataframe(res)
 
-# =========================================================
-# =================== PENSIONS-SIMULERING =================
-# =========================================================
+# ========================================================================
+#                             PENSIONS-SIMULERING
+# ========================================================================
 else:
     st.title("Pensionssimulering – Aktier vs. Obligationer")
 
-    # Inputs (basis)
     sim_cols = st.columns(3)
-    start_cap      = sim_cols[0].number_input("Startkapital", min_value=0.0, value=250000.0,
-                                              step=10000.0, format="%.0f", key="sim_start_cap")
-    yearly_contrib = sim_cols[1].number_input("Årlig indbetaling", min_value=0.0, value=24000.0,
-                                              step=1000.0, format="%.0f", key="sim_yearly_contrib")
-    horizon_years  = sim_cols[2].number_input("Investeringshorisont (år)", min_value=1, value=18,
-                                              step=1, key="sim_horizon")
+    start_cap      = sim_cols[0].number_input("Startkapital", min_value=0.0, step=10000.0,
+                                              value=st.session_state["sim_start_cap"], key="sim_start_cap", format="%.0f")
+    yearly_contrib = sim_cols[1].number_input("Årlig indbetaling", min_value=0.0, step=1000.0,
+                                              value=st.session_state["sim_yearly_contrib"], key="sim_yearly_contrib", format="%.0f")
+    horizon_years  = sim_cols[2].number_input("Investeringshorisont (år)", min_value=1, step=1,
+                                              value=st.session_state["sim_horizon"], key="sim_horizon")
 
-    contrib_timing = st.selectbox("Indbetalingstidspunkt", ["start", "end"], index=1, key="sim_timing")
-    n_sims         = st.slider("Antal simulationer", 1000, 20000, 5000, step=1000, key="sim_nsims",
+    contrib_timing = st.selectbox("Indbetalingstidspunkt", ["start", "end"],
+                                  index=0 if st.session_state["sim_timing"]=="start" else 1, key="sim_timing")
+    n_sims         = st.slider("Antal simulationer", 1000, 20000, 5000, step=1000,
+                               key="sim_nsims", value=st.session_state["sim_nsims"],
                                help="Flere simulationer = mere stabile percentiler, men langsommere.")
 
-    # Skat i simuleringen (genbrug global sats; egen toggle)
+    # Global skat + toggle for simulering
     tax_rate_global = st.sidebar.number_input("Effektiv skattesats (global)", min_value=0.0, max_value=1.0,
-                                              value=0.15, key="sim_tax_global",
+                                              value=st.session_state["sim_tax_global"], key="sim_tax_global",
                                               help="Effektiv sats pr. år – samme logik som i Analysen.")
-    use_tax_sim = st.checkbox("Anvend skat i simuleringen (samme sats som global)", value=True, key="sim_use_tax")
+    use_tax_sim = st.checkbox("Anvend skat i simuleringen (samme sats som global)",
+                              value=st.session_state["sim_use_tax"], key="sim_use_tax")
     tax_rate_sim = tax_rate_global if use_tax_sim else 0.0
 
-    # Percentilvalg
-    preset = st.selectbox("Percentiler", ["5/95", "10/90"], index=0, key="sim_pct_preset")
+    preset = st.selectbox("Percentiler", ["5/95", "10/90"],
+                          index=0 if st.session_state["sim_pct_preset"]=="5/95" else 1, key="sim_pct_preset")
     p_low, p_high = (5, 95) if preset == "5/95" else (10, 90)
 
-    # Vægte
     st.markdown("### Porteføljevægte")
     weights_cols = st.columns(2)
-    w_eq_primary = weights_cols[0].slider("Primær portefølje – Aktieandel (%)", 0, 100, 60, step=5,
-                                          key="sim_w_eq_primary") / 100.0
-    w_eq_alt     = weights_cols[1].slider("Alternativ portefølje – Aktieandel (%)", 0, 100, 80, step=5,
-                                          key="sim_w_eq_alt") / 100.0
+    w_eq_primary = weights_cols[0].slider("Primær portefølje – Aktieandel (%)", 0, 100,
+                                          value=st.session_state["sim_w_eq_primary"], step=5, key="sim_w_eq_primary") / 100.0
+    w_eq_alt     = weights_cols[1].slider("Alternativ portefølje – Aktieandel (%)", 0, 100,
+                                          value=st.session_state["sim_w_eq_alt"], step=5, key="sim_w_eq_alt") / 100.0
 
     with st.expander("Avancerede antagelser (afkast/vol/korrelation)"):
         a1, a2, a3 = st.columns(3)
-        mu_eq = a1.number_input("Forventet årligt aktieafkast", value=0.07, step=0.005, format="%.3f",
-                                key="sim_mu_eq")
-        mu_bd = a2.number_input("Forventet årligt obligationsafkast", value=0.02, step=0.005, format="%.3f",
-                                key="sim_mu_bd")
-        rho   = a3.number_input("Korrelation (aktier, obligationer)", value=0.10, step=0.05,
-                                min_value=-1.0, max_value=1.0, key="sim_rho")
+        mu_eq = a1.number_input("Forventet årligt aktieafkast", value=0.07, step=0.005, format="%.3f", key="sim_mu_eq")
+        mu_bd = a2.number_input("Forventet årligt obligationsafkast", value=0.02, step=0.005, format="%.3f", key="sim_mu_bd")
+        rho   = a3.number_input("Korrelation (aktier, obligationer)", value=0.10, step=0.05, min_value=-1.0, max_value=1.0, key="sim_rho")
 
         b1, b2 = st.columns(2)
-        sig_eq = b1.number_input("Aktie-volatilitet (årlig std.)", value=0.18, step=0.01, format="%.2f",
-                                 key="sim_sig_eq")
-        sig_bd = b2.number_input("Obligations-volatilitet (årlig std.)", value=0.06, step=0.01, format="%.2f",
-                                 key="sim_sig_bd")
+        sig_eq = b1.number_input("Aktie-volatilitet (årlig std.)", value=0.18, step=0.01, format="%.2f", key="sim_sig_eq")
+        sig_bd = b2.number_input("Obligations-volatilitet (årlig std.)", value=0.06, step=0.01, format="%.2f", key="sim_sig_bd")
 
-    # Beregn porteføljeparametre
+    # Porteføljeparametre
     mu_p_primary, sig_p_primary = port_params(w_eq_primary, mu_eq, mu_bd, sig_eq, sig_bd, rho)
     mu_p_alt,     sig_p_alt     = port_params(w_eq_alt,     mu_eq, mu_bd, sig_eq, sig_bd, rho)
 
@@ -429,7 +462,7 @@ else:
     e2.metric("Risiko (worst-case) ændring", f"{(pL_a - pL_p):,.0f} kr")
     e3.metric("Upside (best-case) ændring", f"{(pH_a - pH_p):,.0f} kr")
 
-    # Risk matching (match samme worst-case som primær ved p_low)
+    # Risk matching (match samme low-percentil som primær)
     st.markdown("### 🔁 Matching af risiko")
     req_contrib = risk_match_required_contrib(
         target_worstcase=pL_p,
