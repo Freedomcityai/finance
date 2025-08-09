@@ -6,38 +6,18 @@ from pathlib import Path
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
-# LIGE EFTER st.set_page_config(...)
-st.markdown("""
-<style>
-/* Farv alle valgte chips i st.multiselect */
-.stMultiSelect [data-baseweb="tag"],
-.stMultiSelect [data-baseweb="tag"] div,
-.stMultiSelect [data-baseweb="tag"] span {
-  background-color: #005782 !important;
-  color: #ffffff !important;
-  border-color: #005782 !important;
-}
-
-/* Close-ikonet (x) */
-.stMultiSelect [data-baseweb="tag"] svg {
-  fill: #ffffff !important;
-  color: #ffffff !important;
-}
-
-/* Hover/fokus state */
-.stMultiSelect [data-baseweb="tag"]:hover,
-.stMultiSelect [data-baseweb="tag"]:focus-within {
-  background-color: #004667 !important;
-  border-color: #004667 !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
 
 META_COLS = ["Name", "NHM_Id", "Produktudbyder", "Produkt", "Risikoniveau", "År til pension", "ÅOP"]
 CSV_CANDIDATES = ["afkast_clean.csv", "data/afkast_clean.csv"]
 XLSX_CANDIDATES = ["Afkast_Delvis.xlsx", "data/Afkast_Delvis.xlsx"]
+
+# --- KPI tooltips ---
+KPI_HELP = {
+    "CAGR": "Geometrisk gennemsnitligt årligt afkast over perioden.",
+    "Volatilitet": "Årlig standardafvigelse af afkast (risikomål).",
+    "Max Drawdown": "Største peak-to-trough fald i værdikurven i perioden.",
+    "Sharpe Ratio": "Gennemsnitligt merafkast ift. risikofri rente divideret med volatilitet.",
+}
 
 # --- DATA LOADING ---
 def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
@@ -48,7 +28,6 @@ def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
     long_df["Date"] = pd.to_datetime(long_df["Date"], errors="coerce")
     long_df["Return"] = long_df["Return"].astype(str).str.replace(",", ".", regex=False)
     long_df["Return"] = pd.to_numeric(long_df["Return"], errors="coerce")
-
     if long_df["Return"].dropna().abs().max() > 1.0:
         long_df["Return"] = long_df["Return"] / 100.0
 
@@ -59,18 +38,21 @@ def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
+    # CSV (semikolon eller komma)
     for p in CSV_CANDIDATES:
         if Path(p).exists():
             df = pd.read_csv(p, sep=";", dtype=str)
             df.columns = [c.strip() for c in df.columns]
-            if "Date" not in df.columns:
+            if "Date" not in df.columns:  # prøv komma-separeret
                 df = pd.read_csv(p, dtype=str)
                 df.columns = [c.strip() for c in df.columns]
             if "Date" not in df.columns:
                 raise ValueError("CSV mangler 'Date'.")
+
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-            df["Return"] = df["Return"].astype(str).str.replace(",", ".", regex=False)
+            df["Return"] = (df["Return"].astype(str).str.replace(",", ".", regex=False))
             df["Return"] = pd.to_numeric(df["Return"], errors="coerce")
+
             if "Serie" not in df.columns and "Name" in df.columns:
                 df["Serie"] = df["Name"].astype(str).str.replace(r",?\s*benchmark$", "", regex=True)
             if "IsBenchmark" in df.columns:
@@ -80,14 +62,19 @@ def load_data() -> pd.DataFrame:
                 df["IsBenchmark"] = df["Produkt"].astype(str).str.lower().eq("benchmark")
             else:
                 df["IsBenchmark"] = False
+
             if "Produktudbyder" not in df.columns:
                 df["Produktudbyder"] = ""
+
             df = df.dropna(subset=["Date", "Return"]).reset_index(drop=True)
             return df
+
+    # Excel fallback
     for p in XLSX_CANDIDATES:
         if Path(p).exists():
             return _tidy_from_excel(p)
-    st.error("Ingen gyldig afkast-fil fundet.")
+
+    st.error("Ingen gyldig afkast-fil fundet (afkast_clean.csv eller Afkast_Delvis.xlsx).")
     st.stop()
 
 # --- CALCULATIONS ---
@@ -140,19 +127,25 @@ with st.sidebar:
     st.header("Indstillinger")
     start_balance = st.number_input("Eksisterende opsparing", min_value=0.0, value=100000.0, step=1000.0, format="%.2f")
     annual_contrib = st.number_input("Årlig indbetaling", min_value=0.0, value=24000.0, step=1000.0, format="%.2f")
-    years_available = sorted(df["Date"].dt.year.unique(), reverse=True)
-    from_year = st.sidebar.selectbox("Fra år", years_available, index=0)
-    to_year   = st.sidebar.selectbox("Til år",  years_available, index=len(years_available)-1)
+
+    # ↓↓↓ Flyttet herop + sorteret faldende ↓↓↓
+    # Bemærk: vi bruger dataens år til at bygge valgene
+    _df_for_years = load_data()
+    years_available = sorted(_df_for_years["Date"].dt.year.unique(), reverse=True)
+    from_year = st.selectbox("Fra år", years_available, index=0)
+    to_year   = st.selectbox("Til år",  years_available, index=len(years_available)-1)
+    # ↑↑↑
+
     contrib_timing = st.selectbox("Indbetalingstidspunkt", options=["start", "end"], index=1)
     tax_rate = st.number_input("Effektiv skattesats", min_value=0.0, max_value=1.0, value=0.15)
     rf_rate = st.number_input("Risikofri rente", min_value=-1.0, max_value=1.0, value=0.0)
 
+# Indlæs rigtige data (ikke den midlertidige til årsliste)
 df = load_data()
 
+# Produktvalg (max 5, kun non-benchmark)
 non_bench_mask = ~df["IsBenchmark"].astype(bool)
 all_series = sorted(df.loc[non_bench_mask, "Serie"].dropna().unique().tolist())
-
-# Produktvalg (max 5)
 selected_series = st.multiselect(
     "Vælg op til 5 produkter",
     options=all_series,
@@ -160,16 +153,12 @@ selected_series = st.multiselect(
     max_selections=5
 )
 
-# Periodevalg
-years_available = sorted(df["Date"].dt.year.unique())
-from_year = st.sidebar.selectbox("Fra år", years_available, index=0)
-to_year = st.sidebar.selectbox("Til år", years_available, index=len(years_available)-1)
-
-# Filtrer
-df = df[df["Date"].dt.year.between(from_year, to_year)]
+# Filtrer på periode (robust uanset rækkefølge)
+year_min, year_max = sorted([from_year, to_year])
+df = df[df["Date"].dt.year.between(year_min, year_max)]
 ann = annualize_from_monthly(df)
 
-# Årlige afkast graf
+# Årlige afkast – samlet søjlediagram (1 decimal, i %)
 fig2 = go.Figure()
 for serie in selected_series:
     prod_ann = ann[(ann["Serie"] == serie) & (~ann["IsBenchmark"])]
@@ -183,7 +172,7 @@ for serie in selected_series:
 fig2.update_layout(title="Årlige afkast (%)", xaxis_title="År", yaxis_title="Afkast (%)")
 st.plotly_chart(fig2, use_container_width=True)
 
-# KPI'er + fælles værdiudviklingsgraf
+# Værdiudvikling – fælles graf + individuelle KPI'er
 st.subheader("Værdiudvikling & KPI'er")
 fig_bal = go.Figure()
 for serie in selected_series:
@@ -199,11 +188,11 @@ for serie in selected_series:
     )
 
     met = metrics(ann_dict, rf_rate)
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric(f"{serie} CAGR", f"{met['CAGR']*100:.1f}%")
-    col2.metric("Volatilitet", f"{met['Volatility']*100:.1f}%")
-    col3.metric("Max Drawdown", f"{met['MaxDrawdown']*100:.1f}%")
-    col4.metric("Sharpe Ratio", f"{met['Sharpe']:.2f}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(f"{serie} CAGR", f"{met['CAGR']*100:.1f}%", help=KPI_HELP["CAGR"])
+    c2.metric("Volatilitet", f"{met['Volatility']*100:.1f}%", help=KPI_HELP["Volatilitet"])
+    c3.metric("Max Drawdown", f"{met['MaxDrawdown']*100:.1f}%", help=KPI_HELP["Max Drawdown"])
+    c4.metric("Sharpe Ratio", f"{met['Sharpe']:.2f}", help=KPI_HELP["Sharpe Ratio"])
 
     fig_bal.add_trace(go.Scatter(
         x=bal_df["Year"],
@@ -219,7 +208,7 @@ fig_bal.update_layout(
 )
 st.plotly_chart(fig_bal, use_container_width=True)
 
-# Resultattabel
+# Resultattabel (formatteret i %)
 st.subheader("Resultattabel")
 res = ann[ann["Serie"].isin(selected_series) & (~ann["IsBenchmark"])].copy()
 res["AnnualReturn"] = res["AnnualReturn"].map(lambda x: f"{x:.1%}")
