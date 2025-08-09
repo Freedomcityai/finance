@@ -8,62 +8,33 @@ from statsmodels.api import OLS, add_constant  # regression
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
 
-# ---------------- Ensure all session keys exist (avoid KeyErrors) ----------------
-def ensure_defaults():
-    defaults = {
-        # View
-        "mode": "Analyse",
-        # Analyse
-        "an_start_balance": 100000.0,
-        "an_annual_contrib": 24000.0,
-        "an_from_year": None,
-        "an_to_year": None,
-        "an_timing": "end",
-        "an_tax": 0.15,
-        "an_rf": 0.0,
-        "an_series": [],
-        # Simulation
-        "sim_start_cap": 250000.0,
-        "sim_yearly_contrib": 24000.0,
-        "sim_horizon": 18,
-        "sim_timing": "end",
-        "sim_nsims": 5000,
-        "sim_tax_global": 0.15,
-        "sim_use_tax": True,
-        "sim_pct_preset": "5/95",
-        "sim_w_eq_primary": 60,  # percent
-        "sim_w_eq_alt": 80,      # percent
-        "sim_mu_eq": 0.07,
-        "sim_mu_bd": 0.02,
-        "sim_rho": 0.10,
-        "sim_sig_eq": 0.18,
-        "sim_sig_bd": 0.06,
-    }
-    for k, v in defaults.items():
-        st.session_state.setdefault(k, v)
+# ---------------- Persist helpers (avoid pruning when widgets unmount) ----------------
+def get_persisted(store_key, default):
+    """Return a persisted value; initialize if missing."""
+    if store_key not in st.session_state:
+        st.session_state[store_key] = default
+    return st.session_state[store_key]
 
-ensure_defaults()
+def persist_from_widget(widget_key, store_key):
+    """If widget updated, copy its value to the persisted key."""
+    if widget_key in st.session_state:
+        st.session_state[store_key] = st.session_state[widget_key]
 
 # ---------------- CSS ----------------
 st.markdown("""
 <style>
 /* Multiselect chips -> blå */
 [data-baseweb="tag"] {
-    background-color: #005782 !important;
-    color: white !important;
-    border-color: #005782 !important;
+  background-color:#005782 !important; color:#fff !important; border-color:#005782 !important;
 }
-[data-baseweb="tag"] span { color: white !important; }
-[data-baseweb="tag"] svg  { fill: white !important; }
-[data-baseweb="tag"]:hover,
-[data-baseweb="tag"]:focus-within {
-    background-color: #004667 !important;
-    border-color: #004667 !important;
+[data-baseweb="tag"] span{ color:#fff !important; }
+[data-baseweb="tag"] svg{ fill:#fff !important; }
+[data-baseweb="tag"]:hover,[data-baseweb="tag"]:focus-within{
+  background-color:#004667 !important; border-color:#004667 !important;
 }
 /* Frame the ENTIRE radio (label + options) and place above 'Indstillinger' */
 section[data-testid="stSidebar"] div[role="radiogroup"]{
-  border:2px solid #005782; border-radius:12px;
-  padding:12px; margin:0 0 14px 0; background:#f6fafc;
+  border:2px solid #005782; border-radius:12px; padding:12px; margin:0 0 14px 0; background:#f6fafc;
 }
 section[data-testid="stSidebar"] div[role="radiogroup"] > label{
   font-weight:700; margin-bottom:8px; color:#0f172a;
@@ -81,9 +52,9 @@ KPI_HELP = {
     "Volatilitet": "Årlig standardafvigelse af afkast (risikomål).",
     "Max Drawdown": "Største peak-to-trough fald i værdikurven i perioden.",
     "Sharpe Ratio": "Gennemsnitligt merafkast ift. risikofri rente divideret med volatilitet.",
-    "Beta": "Hældningen i en OLS-regression af produktets afkast mod benchmark (følsomhed).",
+    "Beta": "Hældning i OLS-regression af produktets afkast mod benchmark (følsomhed).",
     "R2": "Forklaret varians fra regressionen (0–1).",
-    "TE": "Tracking Error: standardafvigelsen af (produkt − benchmark), årlig.",
+    "TE": "Tracking Error: std. af (produkt − benchmark), årligt.",
     "Alpha": "Intercept i regressionen: merafkast uafhængigt af benchmark (årligt).",
 }
 
@@ -106,11 +77,12 @@ def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
+    # CSV (semicolon or comma)
     for p in CSV_CANDIDATES:
         if Path(p).exists():
             df = pd.read_csv(p, sep=";", dtype=str)
             df.columns = [c.strip() for c in df.columns]
-            if "Date" not in df.columns:  # try comma
+            if "Date" not in df.columns:
                 df = pd.read_csv(p, dtype=str)
                 df.columns = [c.strip() for c in df.columns]
             if "Date" not in df.columns:
@@ -137,6 +109,7 @@ def load_data() -> pd.DataFrame:
             df = df.dropna(subset=["Date", "Return"]).reset_index(drop=True)
             return df
 
+    # Excel fallback
     for p in XLSX_CANDIDATES:
         if Path(p).exists():
             return _tidy_from_excel(p)
@@ -150,8 +123,8 @@ def annualize_from_monthly(df: pd.DataFrame) -> pd.DataFrame:
     tmp["Year"] = tmp["Date"].dt.year
     ann = (
         tmp.groupby(["Serie", "Produktudbyder", "IsBenchmark", "Year"])["Return"]
-          .apply(lambda s: (1 + s).prod() - 1)
-          .reset_index(name="AnnualReturn")
+           .apply(lambda s: (1 + s).prod() - 1)
+           .reset_index(name="AnnualReturn")
     )
     return ann
 
@@ -222,7 +195,7 @@ def simulate_paths(mu_p, sig_p, years, sims, start, contrib, timing="end", tax_r
         if timing == "start":
             wealth += contrib
         r = rng.normal(mu_p, sig_p, sims)
-        r_net = r * (1.0 - tax_rate)     # effektiv skat pr. år
+        r_net = r * (1.0 - tax_rate)
         wealth *= (1.0 + r_net)
         if timing == "end":
             wealth += contrib
@@ -259,32 +232,61 @@ def risk_match_required_contrib(target_worstcase, w_eq, mu_e, mu_b, sig_e, sig_b
 
 # ---------------- Sidebar: framed radio ABOVE 'Indstillinger' ----------------
 with st.sidebar:
-    mode = st.radio("Visning", ["Analyse", "Pensionssimulering"], key="mode")
+    # Persist mode too
+    st.radio("Visning", ["Analyse", "Pensionssimulering"], key="w_mode",
+             index=0 if get_persisted("mode", "Analyse") == "Analyse" else 1)
+    persist_from_widget("w_mode", "mode")
+
     st.header("Indstillinger")
+
+mode = st.session_state["mode"]
 
 # ========================================================================
 #                                   ANALYSE
 # ========================================================================
 if mode == "Analyse":
     with st.sidebar:
-        # Seed year choices from data
+        # Seed years from data once
         _df_for_years = load_data()
         years_available = sorted(_df_for_years["Date"].dt.year.unique(), reverse=True)
-        if st.session_state.get("an_from_year") is None:
-            st.session_state["an_from_year"] = years_available[0]
-        if st.session_state.get("an_to_year") is None:
-            st.session_state["an_to_year"] = years_available[-1]
+        if years_available:
+            st.session_state.setdefault("an_from_year", years_available[0])
+            st.session_state.setdefault("an_to_year", years_available[-1])
 
-        # Widgets (use keys only)
-        start_balance  = st.number_input("Eksisterende opsparing", min_value=0.0, step=1000.0,
-                                         format="%.2f", key="an_start_balance")
-        annual_contrib = st.number_input("Årlig indbetaling", min_value=0.0, step=1000.0,
-                                         format="%.2f", key="an_annual_contrib")
-        from_year = st.selectbox("Fra år", years_available, key="an_from_year")
-        to_year   = st.selectbox("Til år",  years_available, key="an_to_year")
-        contrib_timing = st.selectbox("Indbetalingstidspunkt", ["start","end"], key="an_timing")
-        tax_rate = st.number_input("Effektiv skattesats", min_value=0.0, max_value=1.0, key="an_tax")
-        rf_rate  = st.number_input("Risikofri rente", min_value=-1.0, max_value=1.0, key="an_rf")
+        # ---- Inputs (widgets use w_*; values mirrored to store keys) ----
+        st.number_input("Eksisterende opsparing", min_value=0.0, step=1000.0, format="%.2f",
+                        key="w_an_start_balance", value=get_persisted("an_start_balance", 100000.0))
+        persist_from_widget("w_an_start_balance", "an_start_balance")
+
+        st.number_input("Årlig indbetaling", min_value=0.0, step=1000.0, format="%.2f",
+                        key="w_an_annual_contrib", value=get_persisted("an_annual_contrib", 24000.0))
+        persist_from_widget("w_an_annual_contrib", "an_annual_contrib")
+
+        # Fra/Til år indices based on persisted values
+        def idx(options, v, fallback=0):
+            try: return list(options).index(v)
+            except Exception: return fallback
+
+        st.selectbox("Fra år", years_available, key="w_an_from_year",
+                     index=idx(years_available, get_persisted("an_from_year", years_available[0]) if years_available else None))
+        persist_from_widget("w_an_from_year", "an_from_year")
+
+        st.selectbox("Til år", years_available, key="w_an_to_year",
+                     index=idx(years_available, get_persisted("an_to_year", years_available[-1]) if years_available else None,
+                               fallback=len(years_available)-1 if years_available else 0))
+        persist_from_widget("w_an_to_year", "an_to_year")
+
+        st.selectbox("Indbetalingstidspunkt", ["start", "end"], key="w_an_timing",
+                     index=0 if get_persisted("an_timing", "end") == "start" else 1)
+        persist_from_widget("w_an_timing", "an_timing")
+
+        st.number_input("Effektiv skattesats", min_value=0.0, max_value=1.0,
+                        key="w_an_tax", value=get_persisted("an_tax", 0.15))
+        persist_from_widget("w_an_tax", "an_tax")
+
+        st.number_input("Risikofri rente", min_value=-1.0, max_value=1.0,
+                        key="w_an_rf", value=get_persisted("an_rf", 0.0))
+        persist_from_widget("w_an_rf", "an_rf")
 
     st.title("Afkast, benchmark & simulering (årlige afkast)")
 
@@ -292,22 +294,30 @@ if mode == "Analyse":
     non_bench_mask = ~df["IsBenchmark"].astype(bool)
     all_series = sorted(df.loc[non_bench_mask, "Serie"].dropna().unique().tolist())
 
-    # Ensure a default selection once
-    if not st.session_state["an_series"] and all_series:
+    # Default one product once
+    if not st.session_state.get("an_series") and all_series:
         st.session_state["an_series"] = [all_series[0]]
 
-    selected_series = st.multiselect(
-        "Vælg op til 5 produkter",
-        options=all_series,
-        max_selections=5,
-        key="an_series"
-    )
+    st.multiselect("Vælg op til 5 produkter", options=all_series, max_selections=5,
+                   key="w_an_series", default=st.session_state["an_series"])
+    persist_from_widget("w_an_series", "an_series")
+    selected_series = st.session_state["an_series"]
 
+    # Use persisted values for calculations
+    start_balance  = st.session_state["an_start_balance"]
+    annual_contrib = st.session_state["an_annual_contrib"]
+    from_year      = st.session_state["an_from_year"]
+    to_year        = st.session_state["an_to_year"]
+    contrib_timing = st.session_state["an_timing"]
+    tax_rate       = st.session_state["an_tax"]
+    rf_rate        = st.session_state["an_rf"]
+
+    # Filter and aggregate
     year_min, year_max = sorted([from_year, to_year])
     df = df[df["Date"].dt.year.between(year_min, year_max)]
     ann = annualize_from_monthly(df)
 
-    # Årlige afkast – fælles bar chart
+    # Årlige afkast
     fig2 = go.Figure()
     for serie in selected_series:
         prod_ann = ann[(ann["Serie"] == serie) & (~ann["IsBenchmark"])]
@@ -331,13 +341,13 @@ if mode == "Analyse":
 
         bal_df = evolve_balance(
             annual_returns=ann_dict,
-            start_balance=st.session_state["an_start_balance"],
-            annual_contrib=st.session_state["an_annual_contrib"],
-            contrib_timing=st.session_state["an_timing"],
-            tax_rate=st.session_state["an_tax"]
+            start_balance=start_balance,
+            annual_contrib=annual_contrib,
+            contrib_timing=contrib_timing,
+            tax_rate=tax_rate
         )
 
-        met = metrics(ann_dict, st.session_state["an_rf"])
+        met = metrics(ann_dict, rf_rate)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric(f"{serie} CAGR", f"{met['CAGR']*100:.1f}%", help=KPI_HELP["CAGR"])
         c2.metric("Volatilitet", f"{met['Volatility']*100:.1f}%", help=KPI_HELP["Volatilitet"])
@@ -380,56 +390,97 @@ if mode == "Analyse":
 else:
     st.title("Pensionssimulering – Aktier vs. Obligationer")
 
-    sim_cols = st.columns(3)
-    start_cap      = sim_cols[0].number_input("Startkapital", min_value=0.0, step=10000.0,
-                                              format="%.0f", key="sim_start_cap")
-    yearly_contrib = sim_cols[1].number_input("Årlig indbetaling", min_value=0.0, step=1000.0,
-                                              format="%.0f", key="sim_yearly_contrib")
-    horizon_years  = sim_cols[2].number_input("Investeringshorisont (år)", min_value=1, step=1,
-                                              key="sim_horizon")
+    c1, c2, c3 = st.columns(3)
+    c1.number_input("Startkapital", min_value=0.0, step=10000.0, format="%.0f",
+                    key="w_sim_start_cap", value=get_persisted("sim_start_cap", 250000.0))
+    persist_from_widget("w_sim_start_cap", "sim_start_cap")
 
-    contrib_timing = st.selectbox("Indbetalingstidspunkt", ["start", "end"], key="sim_timing")
-    n_sims         = st.slider("Antal simulationer", 1000, 20000, step=1000, key="sim_nsims",
-                               help="Flere simulationer = mere stabile percentiler, men langsommere.")
+    c2.number_input("Årlig indbetaling", min_value=0.0, step=1000.0, format="%.0f",
+                    key="w_sim_yearly_contrib", value=get_persisted("sim_yearly_contrib", 24000.0))
+    persist_from_widget("w_sim_yearly_contrib", "sim_yearly_contrib")
 
-    # Global skat + toggle for simulering
+    c3.number_input("Investeringshorisont (år)", min_value=1, step=1,
+                    key="w_sim_horizon", value=get_persisted("sim_horizon", 18))
+    persist_from_widget("w_sim_horizon", "sim_horizon")
+
+    st.selectbox("Indbetalingstidspunkt", ["start", "end"], key="w_sim_timing",
+                 index=0 if get_persisted("sim_timing", "end") == "start" else 1)
+    persist_from_widget("w_sim_timing", "sim_timing")
+
+    st.slider("Antal simulationer", 1000, 20000, step=1000, key="w_sim_nsims",
+              value=get_persisted("sim_nsims", 5000),
+              help="Flere simulationer = mere stabile percentiler, men langsommere.")
+    persist_from_widget("w_sim_nsims", "sim_nsims")
+
+    # Global skat (in sidebar) + toggle
     tax_rate_global = st.sidebar.number_input("Effektiv skattesats (global)", min_value=0.0, max_value=1.0,
-                                              key="sim_tax_global",
+                                              key="w_sim_tax_global", value=get_persisted("sim_tax_global", 0.15),
                                               help="Effektiv sats pr. år – samme logik som i Analysen.")
-    use_tax_sim = st.checkbox("Anvend skat i simuleringen (samme sats som global)", key="sim_use_tax")
-    tax_rate_sim = tax_rate_global if use_tax_sim else 0.0
+    persist_from_widget("w_sim_tax_global", "sim_tax_global")
 
-    preset = st.selectbox("Percentiler", ["5/95", "10/90"], key="sim_pct_preset")
-    p_low, p_high = (5, 95) if preset == "5/95" else (10, 90)
+    st.checkbox("Anvend skat i simuleringen (samme sats som global)",
+                key="w_sim_use_tax", value=get_persisted("sim_use_tax", True))
+    persist_from_widget("w_sim_use_tax", "sim_use_tax")
+    tax_rate_sim = st.session_state["sim_tax_global"] if st.session_state["sim_use_tax"] else 0.0
+
+    st.selectbox("Percentiler", ["5/95", "10/90"], key="w_sim_pct_preset",
+                 index=0 if get_persisted("sim_pct_preset", "5/95") == "5/95" else 1)
+    persist_from_widget("w_sim_pct_preset", "sim_pct_preset")
+    p_low, p_high = (5, 95) if st.session_state["sim_pct_preset"] == "5/95" else (10, 90)
 
     st.markdown("### Porteføljevægte")
-    weights_cols = st.columns(2)
-    w_eq_primary = weights_cols[0].slider("Primær portefølje – Aktieandel (%)", 0, 100, step=5,
-                                          key="sim_w_eq_primary") / 100.0
-    w_eq_alt     = weights_cols[1].slider("Alternativ portefølje – Aktieandel (%)", 0, 100, step=5,
-                                          key="sim_w_eq_alt") / 100.0
+    wc1, wc2 = st.columns(2)
+    wc1.slider("Primær portefølje – Aktieandel (%)", 0, 100, step=5, key="w_sim_w_eq_primary",
+               value=get_persisted("sim_w_eq_primary", 60))
+    persist_from_widget("w_sim_w_eq_primary", "sim_w_eq_primary")
+
+    wc2.slider("Alternativ portefølje – Aktieandel (%)", 0, 100, step=5, key="w_sim_w_eq_alt",
+               value=get_persisted("sim_w_eq_alt", 80))
+    persist_from_widget("w_sim_w_eq_alt", "sim_w_eq_alt")
 
     with st.expander("Avancerede antagelser (afkast/vol/korrelation)"):
         a1, a2, a3 = st.columns(3)
-        mu_eq = a1.number_input("Forventet årligt aktieafkast", step=0.005, format="%.3f", key="sim_mu_eq")
-        mu_bd = a2.number_input("Forventet årligt obligationsafkast", step=0.005, format="%.3f", key="sim_mu_bd")
-        rho   = a3.number_input("Korrelation (aktier, obligationer)", min_value=-1.0, max_value=1.0,
-                                step=0.05, key="sim_rho")
+        a1.number_input("Forventet årligt aktieafkast", step=0.005, format="%.3f",
+                        key="w_sim_mu_eq", value=get_persisted("sim_mu_eq", 0.07))
+        a2.number_input("Forventet årligt obligationsafkast", step=0.005, format="%.3f",
+                        key="w_sim_mu_bd", value=get_persisted("sim_mu_bd", 0.02))
+        a3.number_input("Korrelation (aktier, obligationer)", min_value=-1.0, max_value=1.0, step=0.05,
+                        key="w_sim_rho", value=get_persisted("sim_rho", 0.10))
+        persist_from_widget("w_sim_mu_eq", "sim_mu_eq")
+        persist_from_widget("w_sim_mu_bd", "sim_mu_bd")
+        persist_from_widget("w_sim_rho",   "sim_rho")
+
         b1, b2 = st.columns(2)
-        sig_eq = b1.number_input("Aktie-volatilitet (årlig std.)", step=0.01, format="%.2f", key="sim_sig_eq")
-        sig_bd = b2.number_input("Obligations-volatilitet (årlig std.)", step=0.01, format="%.2f", key="sim_sig_bd")
+        b1.number_input("Aktie-volatilitet (årlig std.)", step=0.01, format="%.2f",
+                        key="w_sim_sig_eq", value=get_persisted("sim_sig_eq", 0.18))
+        b2.number_input("Obligations-volatilitet (årlig std.)", step=0.01, format="%.2f",
+                        key="w_sim_sig_bd", value=get_persisted("sim_sig_bd", 0.06))
+        persist_from_widget("w_sim_sig_eq", "sim_sig_eq")
+        persist_from_widget("w_sim_sig_bd", "sim_sig_bd")
+
+    # Pull persisted values for simulation
+    start_cap      = st.session_state["sim_start_cap"]
+    yearly_contrib = st.session_state["sim_yearly_contrib"]
+    horizon_years  = st.session_state["sim_horizon"]
+    contrib_timing = st.session_state["sim_timing"]
+    n_sims         = st.session_state["sim_nsims"]
+    w_eq_primary   = st.session_state["sim_w_eq_primary"] / 100.0
+    w_eq_alt       = st.session_state["sim_w_eq_alt"] / 100.0
+    mu_eq          = st.session_state["sim_mu_eq"]
+    mu_bd          = st.session_state["sim_mu_bd"]
+    rho            = st.session_state["sim_rho"]
+    sig_eq         = st.session_state["sim_sig_eq"]
+    sig_bd         = st.session_state["sim_sig_bd"]
 
     # Porteføljeparametre
     mu_p_primary, sig_p_primary = port_params(w_eq_primary, mu_eq, mu_bd, sig_eq, sig_bd, rho)
     mu_p_alt,     sig_p_alt     = port_params(w_eq_alt,     mu_eq, mu_bd, sig_eq, sig_bd, rho)
 
     # Simulationer
-    traj_primary = simulate_paths(mu_p_primary, sig_p_primary, horizon_years, st.session_state["sim_nsims"],
-                                  st.session_state["sim_start_cap"], st.session_state["sim_yearly_contrib"],
-                                  st.session_state["sim_timing"], tax_rate=tax_rate_sim, seed=1)
-    traj_alt     = simulate_paths(mu_p_alt,     sig_p_alt,     horizon_years, st.session_state["sim_nsims"],
-                                  st.session_state["sim_start_cap"], st.session_state["sim_yearly_contrib"],
-                                  st.session_state["sim_timing"], tax_rate=tax_rate_sim, seed=2)
+    traj_primary = simulate_paths(mu_p_primary, sig_p_primary, horizon_years, n_sims,
+                                  start_cap, yearly_contrib, contrib_timing, tax_rate=tax_rate_sim, seed=1)
+    traj_alt     = simulate_paths(mu_p_alt,     sig_p_alt,     horizon_years, n_sims,
+                                  start_cap, yearly_contrib, contrib_timing, tax_rate=tax_rate_sim, seed=2)
 
     # Resultater (terminal)
     pL_p, p50_p, pH_p = summarize_terminal(traj_primary, p_low, p_high)
@@ -459,13 +510,10 @@ else:
         target_worstcase=pL_p,
         w_eq=w_eq_alt,
         mu_e=mu_eq, mu_b=mu_bd, sig_e=sig_eq, sig_b=sig_bd, rho_eb=rho,
-        years=st.session_state["sim_horizon"], sims=st.session_state["sim_nsims"],
-        start=st.session_state["sim_start_cap"], timing=st.session_state["sim_timing"],
-        tax_rate=tax_rate_sim
+        years=horizon_years, sims=n_sims, start=start_cap, timing=contrib_timing, tax_rate=tax_rate_sim
     )
-    traj_matched = simulate_paths(mu_p_alt, sig_p_alt, st.session_state["sim_horizon"], st.session_state["sim_nsims"],
-                                  st.session_state["sim_start_cap"], req_contrib, st.session_state["sim_timing"],
-                                  tax_rate=tax_rate_sim, seed=3)
+    traj_matched = simulate_paths(mu_p_alt, sig_p_alt, horizon_years, n_sims,
+                                  start_cap, req_contrib, contrib_timing, tax_rate=tax_rate_sim, seed=3)
     _, p50_m, _ = summarize_terminal(traj_matched, p_low, p_high)
 
     st.write(f"For at fastholde samme worst-case ({pL_p:,.0f} kr), bør årlig indbetaling hæves til **{req_contrib:,.0f} kr**.")
