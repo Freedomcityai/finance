@@ -6,6 +6,19 @@ from pathlib import Path
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
+# Tilpas farven på valgte multiselect-tags
+st.markdown(
+    """
+    <style>
+    div[data-baseweb="tag"] {
+        background-color: #005782 !important;
+        color: white !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 
 META_COLS = ["Name", "NHM_Id", "Produktudbyder", "Produkt", "Risikoniveau", "År til pension", "ÅOP"]
 CSV_CANDIDATES = ["afkast_clean.csv", "data/afkast_clean.csv"]
