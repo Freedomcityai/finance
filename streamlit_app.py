@@ -289,8 +289,8 @@ if mode == "Analyse":
         _df_for_years = load_data()
         years_available = sorted(_df_for_years["Date"].dt.year.unique(), reverse=True)
         if years_available:
-            st.session_state.setdefault("an_from_year", years_available[0])
-            st.session_state.setdefault("an_to_year", years_available[-1])
+            st.session_state.setdefault("an_from_year", 2020)
+            st.session_state.setdefault("an_to_year", 2024)
 
         # Money inputs
         start_balance  = money_input("Eksisterende opsparing", "an_start_balance", 500000.0, step=1000)
