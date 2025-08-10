@@ -32,7 +32,6 @@ def format_dkk(x: float, decimals: int = 0) -> str:
         return s.replace(",", ".")
     else:
         s = f"{xf:,.{decimals}f}"
-        # US -> DK: , tusind  . decimal  -->  . tusind  , decimal
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 def parse_dkk(s: str) -> float:
@@ -290,7 +289,7 @@ if mode == "Analyse":
             st.session_state.setdefault("an_from_year", years_available[0])
             st.session_state.setdefault("an_to_year", years_available[-1])
 
-        # Money inputs with thousand separators
+        # Money inputs
         start_balance  = money_input("Eksisterende opsparing", "an_start_balance", 100000.0, step=1000)
         annual_contrib = money_input("Årlig indbetaling", "an_annual_contrib", 24000.0, step=1000)
 
@@ -407,41 +406,49 @@ if mode == "Analyse":
         final_value = float(bal_df["EndBalance"].iloc[-1])
         final_labels.append((serie, int(bal_df["Year"].iloc[-1]), final_value))
 
-    # Give lidt luft til højre, så labels kan stå pænt
-    fig_bal.update_xaxes(range=[year_min, year_max + 0.6])
+    # --- Giv plads i højre side til labels og flyt legend nederst ---
+    fig_bal.update_xaxes(domain=[0.0, 0.78], range=[year_min, year_max + 0.4])
+    fig_bal.update_layout(
+        showlegend=True,
+        legend=dict(orientation="h", y=-0.22, x=0.5, xanchor="center", title_text=""),
+        margin=dict(r=160, b=80),  # plads til labels til højre + nederst
+        title="Værdiudvikling – alle valgte produkter",
+        xaxis_title="År",
+        yaxis_title="Balance (kr.)",
+    )
+    fig_bal.update_yaxes(tickformat=",")
 
-    # Annotations ved sidste punkt (i farver som linjerne)
+    # --- Slutlabels til højre i samme farver som linjerne ---
     for i, (serie, x_last, y_last) in enumerate(final_labels):
-        color = None
         try:
             color = fig_bal.data[i].line.color
         except Exception:
-            color = None
-        if not color:
-            # simple fallback palette
             color = ["#005782", "#7db5ff", "#ff6600", "#2ca02c", "#9467bd"][i % 5]
 
         fig_bal.add_annotation(
-            x=x_last + 0.15, y=y_last,
-            xref="x", yref="y",
+            x=0.82, y=y_last, xref="paper", yref="y",   # udenfor plottet til højre
             xanchor="left", yanchor="middle",
             text=f"{serie.split(' ')[0]} - {format_dkk(y_last, 0)}",
             showarrow=False,
             font=dict(size=18, color=color)
         )
 
-    fig_bal.update_layout(
-        title="Værdiudvikling – alle valgte produkter",
-        xaxis_title="År",
-        yaxis_title="Balance (kr.)",
-    )
-    fig_bal.update_yaxes(tickformat=",")  # thousand separator
     st.plotly_chart(fig_bal, use_container_width=True)
 
-    st.subheader("Resultattabel")
-    res = ann[ann["Serie"].isin(selected_series) & (~ann["IsBenchmark"])].copy()
-    res["AnnualReturn"] = res["AnnualReturn"].map(lambda x: f"{x:.1%}")
-    st.dataframe(res)
+    # --- Difference-oversigt: slutværdi og forskel til bedste ---
+    summary = pd.DataFrame(final_labels, columns=["Serie", "Year", "Slutværdi"])
+    summary = summary.sort_values("Slutværdi", ascending=False).reset_index(drop=True)
+    top_val = float(summary.loc[0, "Slutværdi"])
+    summary["Slutværdi (kr)"] = summary["Slutværdi"].apply(lambda v: f"{float(v):,.0f} kr")
+    summary["Diff til top (kr)"] = summary["Slutværdi"].apply(lambda v: f"{(top_val - float(v)):,.0f} kr")
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Bedst (slutværdi)", summary.loc[0, "Serie"], summary.loc[0, "Slutværdi (kr)"])
+    m2.metric("Dårligst (slutværdi)", summary.loc[len(summary)-1, "Serie"], summary.loc[len(summary)-1, "Slutværdi (kr)"])
+    m3.metric("Forskel top ↔ bund", f"{(top_val - float(summary.loc[len(summary)-1, 'Slutværdi'])):,.0f} kr")
+
+    st.markdown("#### Slutopsparing og difference")
+    st.dataframe(summary[["Serie", "Slutværdi (kr)", "Diff til top (kr)"]], use_container_width=True)
 
 # ========================================================================
 #                             PENSIONS-SIMULERING
