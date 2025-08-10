@@ -97,6 +97,7 @@ KPI_HELP = {
 }
 
 # ---------------- Data loading ----------------
+
 def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
     raw = pd.read_excel(xlsx_path, sheet_name="Afkast")
     date_cols = [c for c in raw.columns if c not in META_COLS]
@@ -156,6 +157,7 @@ def load_data() -> pd.DataFrame:
     st.stop()
 
 # ---------------- Analysis helpers ----------------
+
 def annualize_from_monthly(df: pd.DataFrame) -> pd.DataFrame:
     tmp = df.copy()
     tmp["Year"] = tmp["Date"].dt.year
@@ -217,6 +219,7 @@ def regression_vs_bench(prod_ann: pd.DataFrame, bench_ann: pd.DataFrame):
     return {"beta": beta, "alpha": alpha, "R2": r2, "TE": te}, merged
 
 # ---------------- Simulation helpers ----------------
+
 def port_params(w_eq, mu_e, mu_b, sig_e, sig_b, rho_eb):
     w_b = 1.0 - w_eq
     mu_p = w_eq * mu_e + w_b * mu_b
