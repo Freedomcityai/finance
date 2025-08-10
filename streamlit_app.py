@@ -20,6 +20,45 @@ def persist_from_widget(widget_key, store_key):
     if widget_key in st.session_state:
         st.session_state[store_key] = st.session_state[widget_key]
 
+# ---------------- Money formatting helpers (Danish thousand separators) ----------------
+def format_dkk(x: float, decimals: int = 0) -> str:
+    """Dansk tusindtalsformat. 1234567.89 -> '1.234.568' eller med decimaler."""
+    try:
+        xf = float(x)
+    except:
+        xf = 0.0
+    if decimals == 0:
+        s = f"{int(round(xf)):,}"
+        return s.replace(",", ".")
+    else:
+        s = f"{xf:,.{decimals}f}"
+        # US -> DK: , tusind  . decimal  -->  . tusind  , decimal
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+def parse_dkk(s: str) -> float:
+    """Parse '1.234.567,89' eller '1.234.567' til float."""
+    if s is None:
+        return 0.0
+    s = s.strip().replace(" ", "")
+    s = s.replace(".", "")   # fjern tusind
+    s = s.replace(",", ".")  # dansk decimal -> punktum
+    try:
+        return float(s)
+    except:
+        return 0.0
+
+def money_input(label: str, store_key: str, default: float = 0.0, step: int = 1000):
+    """Tekstbaseret money input med dansk formattering + vedvarende state."""
+    current = get_persisted(store_key, default)
+    disp = format_dkk(current, 0)
+    s = st.text_input(label, value=disp, key=f"w_{store_key}")
+    val = parse_dkk(s)
+    if step and step > 0:
+        val = round(val / step) * step
+    st.session_state[store_key] = max(0.0, val)
+    st.caption(f"Indtastning: {format_dkk(st.session_state[store_key], 0)} kr")
+    return st.session_state[store_key]
+
 # ---------------- CSS ----------------
 st.markdown("""
 <style>
@@ -220,7 +259,7 @@ def risk_match_required_contrib(target_worstcase, w_eq, mu_e, mu_b, sig_e, sig_b
                                 years, sims, start, timing="end", tax_rate=0.0):
     mu_p, sig_p = port_params(w_eq, mu_e, mu_b, sig_e, sig_b, rho_eb)
     lo, hi = 0.0, max(1.0, start/years * 2 + 100000.0)
-    for _ in range(18):  # binær søgning
+    for _ in range(18):
         mid = 0.5*(lo+hi)
         traj = simulate_paths(mu_p, sig_p, years, sims, start, mid, timing, tax_rate=tax_rate, seed=7)
         pL, _, _ = summarize_terminal(traj)
@@ -232,11 +271,9 @@ def risk_match_required_contrib(target_worstcase, w_eq, mu_e, mu_b, sig_e, sig_b
 
 # ---------------- Sidebar: framed radio ABOVE 'Indstillinger' ----------------
 with st.sidebar:
-    # Persist mode too
     st.radio("Visning", ["Analyse", "Pensionssimulering"], key="w_mode",
              index=0 if get_persisted("mode", "Analyse") == "Analyse" else 1)
     persist_from_widget("w_mode", "mode")
-
     st.header("Indstillinger")
 
 mode = st.session_state["mode"]
@@ -253,16 +290,11 @@ if mode == "Analyse":
             st.session_state.setdefault("an_from_year", years_available[0])
             st.session_state.setdefault("an_to_year", years_available[-1])
 
-        # ---- Inputs (widgets use w_*; values mirrored to store keys) ----
-        st.number_input("Eksisterende opsparing", min_value=0.0, step=1000.0, format="%.2f",
-                        key="w_an_start_balance", value=get_persisted("an_start_balance", 100000.0))
-        persist_from_widget("w_an_start_balance", "an_start_balance")
+        # Money inputs with thousand separators
+        start_balance  = money_input("Eksisterende opsparing", "an_start_balance", 100000.0, step=1000)
+        annual_contrib = money_input("Årlig indbetaling", "an_annual_contrib", 24000.0, step=1000)
 
-        st.number_input("Årlig indbetaling", min_value=0.0, step=1000.0, format="%.2f",
-                        key="w_an_annual_contrib", value=get_persisted("an_annual_contrib", 24000.0))
-        persist_from_widget("w_an_annual_contrib", "an_annual_contrib")
-
-        # Fra/Til år indices based on persisted values
+        # Fra/Til år
         def idx(options, v, fallback=0):
             try: return list(options).index(v)
             except Exception: return fallback
@@ -317,7 +349,7 @@ if mode == "Analyse":
     df = df[df["Date"].dt.year.between(year_min, year_max)]
     ann = annualize_from_monthly(df)
 
-    # Årlige afkast
+    # Årlige afkast (bar)
     fig2 = go.Figure()
     for serie in selected_series:
         prod_ann = ann[(ann["Serie"] == serie) & (~ann["IsBenchmark"])]
@@ -331,9 +363,10 @@ if mode == "Analyse":
     fig2.update_layout(title="Årlige afkast (%)", xaxis_title="År", yaxis_title="Afkast (%)")
     st.plotly_chart(fig2, use_container_width=True)
 
-    # Værdiudvikling + KPI’er
+    # Værdiudvikling + KPI’er + slut-annotationer
     st.subheader("Værdiudvikling & KPI'er")
     fig_bal = go.Figure()
+    final_labels = []
 
     for serie in selected_series:
         prod_ann = ann[(ann["Serie"] == serie) & (~ann["IsBenchmark"])]
@@ -365,18 +398,44 @@ if mode == "Analyse":
         else:
             st.info(f"{serie}: For få år til benchmark-regression.")
 
-        fig_bal.add_trace(go.Scatter(
-            x=bal_df["Year"],
-            y=bal_df["EndBalance"],
-            mode="lines+markers",
-            name=serie
-        ))
+        trace = go.Scatter(
+            x=bal_df["Year"], y=bal_df["EndBalance"],
+            mode="lines+markers", name=serie
+        )
+        fig_bal.add_trace(trace)
+
+        final_value = float(bal_df["EndBalance"].iloc[-1])
+        final_labels.append((serie, int(bal_df["Year"].iloc[-1]), final_value))
+
+    # Give lidt luft til højre, så labels kan stå pænt
+    fig_bal.update_xaxes(range=[year_min, year_max + 0.6])
+
+    # Annotations ved sidste punkt (i farver som linjerne)
+    for i, (serie, x_last, y_last) in enumerate(final_labels):
+        color = None
+        try:
+            color = fig_bal.data[i].line.color
+        except Exception:
+            color = None
+        if not color:
+            # simple fallback palette
+            color = ["#005782", "#7db5ff", "#ff6600", "#2ca02c", "#9467bd"][i % 5]
+
+        fig_bal.add_annotation(
+            x=x_last + 0.15, y=y_last,
+            xref="x", yref="y",
+            xanchor="left", yanchor="middle",
+            text=f"{serie.split(' ')[0]} - {format_dkk(y_last, 0)}",
+            showarrow=False,
+            font=dict(size=18, color=color)
+        )
 
     fig_bal.update_layout(
         title="Værdiudvikling – alle valgte produkter",
         xaxis_title="År",
-        yaxis_title="Balance (kr.)"
+        yaxis_title="Balance (kr.)",
     )
+    fig_bal.update_yaxes(tickformat=",")  # thousand separator
     st.plotly_chart(fig_bal, use_container_width=True)
 
     st.subheader("Resultattabel")
@@ -391,14 +450,8 @@ else:
     st.title("Pensionssimulering – Aktier vs. Obligationer")
 
     c1, c2, c3 = st.columns(3)
-    c1.number_input("Startkapital", min_value=0.0, step=10000.0, format="%.0f",
-                    key="w_sim_start_cap", value=get_persisted("sim_start_cap", 250000.0))
-    persist_from_widget("w_sim_start_cap", "sim_start_cap")
-
-    c2.number_input("Årlig indbetaling", min_value=0.0, step=1000.0, format="%.0f",
-                    key="w_sim_yearly_contrib", value=get_persisted("sim_yearly_contrib", 24000.0))
-    persist_from_widget("w_sim_yearly_contrib", "sim_yearly_contrib")
-
+    start_cap      = money_input("Startkapital", "sim_start_cap", 250000.0, step=10000)
+    yearly_contrib = money_input("Årlig indbetaling", "sim_yearly_contrib", 24000.0, step=1000)
     c3.number_input("Investeringshorisont (år)", min_value=1, step=1,
                     key="w_sim_horizon", value=get_persisted("sim_horizon", 18))
     persist_from_widget("w_sim_horizon", "sim_horizon")
@@ -423,10 +476,21 @@ else:
     persist_from_widget("w_sim_use_tax", "sim_use_tax")
     tax_rate_sim = st.session_state["sim_tax_global"] if st.session_state["sim_use_tax"] else 0.0
 
-    st.selectbox("Percentiler", ["5/95", "10/90"], key="w_sim_pct_preset",
-                 index=0 if get_persisted("sim_pct_preset", "5/95") == "5/95" else 1)
-    persist_from_widget("w_sim_pct_preset", "sim_pct_preset")
-    p_low, p_high = (5, 95) if st.session_state["sim_pct_preset"] == "5/95" else (10, 90)
+    # Frit valg af percentiler
+    col_p1, col_p2 = st.columns(2)
+    col_p1.number_input("Lav percentil", 0, 50, key="w_sim_p_low",
+                        value=get_persisted("sim_p_low", 10), help="Fx 10 for 10-percentilen")
+    persist_from_widget("w_sim_p_low", "sim_p_low")
+
+    col_p2.number_input("Høj percentil", 50, 100, key="w_sim_p_high",
+                        value=get_persisted("sim_p_high", 90), help="Fx 90 for 90-percentilen")
+    persist_from_widget("w_sim_p_high", "sim_p_high")
+
+    p_low  = int(st.session_state["sim_p_low"])
+    p_high = int(st.session_state["sim_p_high"])
+    if not (0 <= p_low < p_high <= 100):
+        st.error("Percentiler skal opfylde: 0 ≤ lav < høj ≤ 100.")
+        st.stop()
 
     st.markdown("### Porteføljevægte")
     wc1, wc2 = st.columns(2)
