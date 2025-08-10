@@ -315,7 +315,7 @@ if mode == "Analyse":
         persist_from_widget("w_an_timing", "an_timing")
 
         st.number_input("Effektiv skattesats", min_value=0.0, max_value=1.0,
-                        key="w_an_tax", value=get_persisted("an_tax", 0.15))
+                        key="w_an_tax", value=get_persisted("an_tax", 0.153))
         persist_from_widget("w_an_tax", "an_tax")
 
         st.number_input("Risikofri rente", min_value=-1.0, max_value=1.0,
@@ -460,7 +460,7 @@ else:
     st.title("Pensionssimulering – Aktier vs. Obligationer")
 
     c1, c2, c3 = st.columns(3)
-    start_cap      = money_input("Startkapital", "sim_start_cap", 250000.0, step=10000)
+    start_cap      = money_input("Startkapital", "sim_start_cap", 500000.0, step=10000)
     yearly_contrib = money_input("Årlig indbetaling", "sim_yearly_contrib", 24000.0, step=1000)
     c3.number_input("Investeringshorisont (år)", min_value=1, step=1,
                     key="w_sim_horizon", value=get_persisted("sim_horizon", 20))
