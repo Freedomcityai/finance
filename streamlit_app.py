@@ -306,7 +306,7 @@ if mode == "Analyse":
         persist_from_widget("w_an_from_year", "an_from_year")
 
         st.selectbox("Til år", years_available, key="w_an_to_year",
-                     index=idx(years_available, get_persisted("an_to_year", 2025) if years_available else None,
+                     index=idx(years_available, get_persisted("an_to_year", 2024) if years_available else None,
                                fallback=len(years_available)-1 if years_available else 0))
         persist_from_widget("w_an_to_year", "an_to_year")
 
