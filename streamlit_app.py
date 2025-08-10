@@ -293,7 +293,7 @@ if mode == "Analyse":
             st.session_state.setdefault("an_to_year", years_available[-1])
 
         # Money inputs
-        start_balance  = money_input("Eksisterende opsparing", "an_start_balance", 100000.0, step=1000)
+        start_balance  = money_input("Eksisterende opsparing", "an_start_balance", 500000.0, step=1000)
         annual_contrib = money_input("Årlig indbetaling", "an_annual_contrib", 24000.0, step=1000)
 
         # Fra/Til år
