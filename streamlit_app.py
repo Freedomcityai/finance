@@ -463,7 +463,7 @@ else:
     start_cap      = money_input("Startkapital", "sim_start_cap", 250000.0, step=10000)
     yearly_contrib = money_input("Årlig indbetaling", "sim_yearly_contrib", 24000.0, step=1000)
     c3.number_input("Investeringshorisont (år)", min_value=1, step=1,
-                    key="w_sim_horizon", value=get_persisted("sim_horizon", 18))
+                    key="w_sim_horizon", value=get_persisted("sim_horizon", 20))
     persist_from_widget("w_sim_horizon", "sim_horizon")
 
     st.selectbox("Indbetalingstidspunkt", ["start", "end"], key="w_sim_timing",
@@ -471,13 +471,13 @@ else:
     persist_from_widget("w_sim_timing", "sim_timing")
 
     st.slider("Antal simulationer", 1000, 20000, step=1000, key="w_sim_nsims",
-              value=get_persisted("sim_nsims", 5000),
+              value=get_persisted("sim_nsims", 1000),
               help="Flere simulationer = mere stabile percentiler, men langsommere.")
     persist_from_widget("w_sim_nsims", "sim_nsims")
 
     # Global skat (in sidebar) + toggle
     tax_rate_global = st.sidebar.number_input("Effektiv skattesats (global)", min_value=0.0, max_value=1.0,
-                                              key="w_sim_tax_global", value=get_persisted("sim_tax_global", 0.15),
+                                              key="w_sim_tax_global", value=get_persisted("sim_tax_global", 0.153),
                                               help="Effektiv sats pr. år – samme logik som i Analysen.")
     persist_from_widget("w_sim_tax_global", "sim_tax_global")
 
@@ -505,7 +505,7 @@ else:
     st.markdown("### Porteføljevægte")
     wc1, wc2 = st.columns(2)
     wc1.slider("Primær portefølje – Aktieandel (%)", 0, 100, step=5, key="w_sim_w_eq_primary",
-               value=get_persisted("sim_w_eq_primary", 60))
+               value=get_persisted("sim_w_eq_primary", 40))
     persist_from_widget("w_sim_w_eq_primary", "sim_w_eq_primary")
 
     wc2.slider("Alternativ portefølje – Aktieandel (%)", 0, 100, step=5, key="w_sim_w_eq_alt",
