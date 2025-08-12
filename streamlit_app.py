@@ -542,11 +542,11 @@ else:
     # Frit valg af percentiler
     col_p1, col_p2 = st.columns(2)
     col_p1.number_input("Lav percentil", 0, 50, key="w_sim_p_low",
-                        value=get_persisted("sim_p_low", 10), help="Fx 10 for 10-percentilen")
+                        value=get_persisted("sim_p_low", 5), help="Fx 10 for 10-percentilen")
     persist_from_widget("w_sim_p_low", "sim_p_low")
 
     col_p2.number_input("Høj percentil", 50, 100, key="w_sim_p_high",
-                        value=get_persisted("sim_p_high", 90), help="Fx 90 for 90-percentilen")
+                        value=get_persisted("sim_p_high", 95), help="Fx 90 for 90-percentilen")
     persist_from_widget("w_sim_p_high", "sim_p_high")
 
     p_low  = int(st.session_state["sim_p_low"])
