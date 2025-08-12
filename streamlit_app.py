@@ -10,6 +10,19 @@ import yaml
 from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 
+from pathlib import Path
+import streamlit as st
+
+# TEMP: show where we are and what files exist
+cwd = Path.cwd()
+st.write("Working dir:", cwd)
+st.write("Files here:", [p.name for p in cwd.iterdir()])
+
+# Try both root and /auth
+for p in [Path("credentials.yaml"), Path("auth/credentials.yaml")]:
+    st.write(p, "exists?", p.exists())
+
+
 # Load credentials from file in repo
 with open("credentials.yaml", "r") as f:
     config = yaml.load(f, Loader=SafeLoader)
