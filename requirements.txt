@@ -4,3 +4,5 @@ numpy
 plotly
 statsmodels
 openpyxl 
+streamlit-authenticator==0.3.2
+pyyaml
