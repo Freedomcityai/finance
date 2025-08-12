@@ -11,7 +11,7 @@ from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 
 # Load credentials from file in repo
-with open("auth/credentials.yaml", "r") as f:
+with open("credentials.yaml", "r") as f:
     config = yaml.load(f, Loader=SafeLoader)
 
 authenticator = stauth.Authenticate(
