@@ -6,6 +6,37 @@ from pathlib import Path
 import plotly.graph_objects as go
 from statsmodels.api import OLS, add_constant  # regression
 
+import yaml
+from yaml.loader import SafeLoader
+import streamlit_authenticator as stauth
+
+# Load credentials from file in repo
+with open("auth/credentials.yaml", "r") as f:
+    config = yaml.load(f, Loader=SafeLoader)
+
+authenticator = stauth.Authenticate(
+    config["credentials"],
+    config["cookie"]["name"],
+    config["cookie"]["key"],
+    config["cookie"]["expiry_days"],
+)
+
+# Renders a login form in the main area
+name, authentication_status, username = authenticator.login("Login", "main")
+
+if authentication_status:
+    # Optional: a small logout button in the sidebar
+    with st.sidebar:
+        st.write(f"Logget ind som **{name}** ({username})")
+        authenticator.logout("Log ud", "sidebar")
+elif authentication_status is False:
+    st.error("Forkert brugernavn eller adgangskode.")
+    st.stop()
+else:
+    st.warning("Indtast brugernavn og adgangskode.")
+    st.stop()
+
+
 st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
 
 # ---------------- Persist helpers (avoid pruning when widgets unmount) ----------------
