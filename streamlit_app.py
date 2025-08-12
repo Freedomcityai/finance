@@ -1,31 +1,34 @@
 # streamlit_app.py
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE CONFIG FIRST
 import streamlit as st
-import pandas as pd
-import numpy as np
-from pathlib import Path
-import plotly.graph_objects as go
-from statsmodels.api import OLS, add_constant  # regression
+st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
 
-import yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTH (works with both new and old streamlit-authenticator)
+import os, yaml
 from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 
-from pathlib import Path
-import streamlit as st
+# Look for credentials in repo root or auth/
+CANDIDATES = ["credentials.yaml", "auth/credentials.yaml"]
+cred_path = next((p for p in CANDIDATES if os.path.isfile(p)), None)
 
-# TEMP: show where we are and what files exist
-cwd = Path.cwd()
-st.write("Working dir:", cwd)
-st.write("Files here:", [p.name for p in cwd.iterdir()])
+if cred_path is None:
+    st.error(
+        "Credentials file not found.\n\n"
+        "Looked for: credentials.yaml, auth/credentials.yaml\n"
+        "If you just added it to GitHub, open Streamlit Cloud → **My apps → ⋯ → Reboot**."
+    )
+    st.stop()
 
-# Try both root and /auth
-for p in [Path("credentials.yaml"), Path("auth/credentials.yaml")]:
-    st.write(p, "exists?", p.exists())
-
-
-# Load credentials from file in repo
-with open("credentials.yaml", "r") as f:
+with open(cred_path, "r", encoding="utf-8") as f:
     config = yaml.load(f, Loader=SafeLoader)
+
+missing = [k for k in ("credentials", "cookie") if k not in config]
+if missing:
+    st.error(f"Missing section(s) in {cred_path}: {', '.join(missing)}")
+    st.stop()
 
 authenticator = stauth.Authenticate(
     config["credentials"],
@@ -34,11 +37,15 @@ authenticator = stauth.Authenticate(
     config["cookie"]["expiry_days"],
 )
 
-# Renders a login form in the main area
-name, authentication_status, username = authenticator.login("Login", "main")
+# Compatible with both new and old authenticator versions
+try:
+    # Newer versions use keyword-only args (no form_name)
+    name, authentication_status, username = authenticator.login(location="main")
+except Exception:
+    # Older v0.3.2 signature
+    name, authentication_status, username = authenticator.login("Login", "main")
 
 if authentication_status:
-    # Optional: a small logout button in the sidebar
     with st.sidebar:
         st.write(f"Logget ind som **{name}** ({username})")
         authenticator.logout("Log ud", "sidebar")
@@ -49,8 +56,13 @@ else:
     st.warning("Indtast brugernavn og adgangskode.")
     st.stop()
 
-
-st.set_page_config(page_title="Finans App – Afkast & Simulation", layout="wide")
+# ─────────────────────────────────────────────────────────────────────────────
+# IMPORTS FOR APP LOGIC
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import plotly.graph_objects as go
+from statsmodels.api import OLS, add_constant  # regression
 
 # ---------------- Persist helpers (avoid pruning when widgets unmount) ----------------
 def get_persisted(store_key, default):
@@ -141,7 +153,6 @@ KPI_HELP = {
 }
 
 # ---------------- Data loading ----------------
-
 def _tidy_from_excel(xlsx_path: str) -> pd.DataFrame:
     raw = pd.read_excel(xlsx_path, sheet_name="Afkast")
     date_cols = [c for c in raw.columns if c not in META_COLS]
@@ -201,7 +212,6 @@ def load_data() -> pd.DataFrame:
     st.stop()
 
 # ---------------- Analysis helpers ----------------
-
 def annualize_from_monthly(df: pd.DataFrame) -> pd.DataFrame:
     tmp = df.copy()
     tmp["Year"] = tmp["Date"].dt.year
@@ -263,7 +273,6 @@ def regression_vs_bench(prod_ann: pd.DataFrame, bench_ann: pd.DataFrame):
     return {"beta": beta, "alpha": alpha, "R2": r2, "TE": te}, merged
 
 # ---------------- Simulation helpers ----------------
-
 def port_params(w_eq, mu_e, mu_b, sig_e, sig_b, rho_eb):
     w_b = 1.0 - w_eq
     mu_p = w_eq * mu_e + w_b * mu_b
@@ -473,7 +482,7 @@ if mode == "Analyse":
             color = ["#005782", "#7db5ff", "#ff6600", "#2ca02c", "#9467bd"][i % 5]
 
         fig_bal.add_annotation(
-            x=0.82, y=y_last, xref="paper", yref="y",   # udenfor plottet til højre
+            x=0.82, y=y_last, xref="paper", yref="y",
             xanchor="left", yanchor="middle",
             text=f"{serie.split(' ')[0]} - {format_dkk(y_last, 0)}",
             showarrow=False,
